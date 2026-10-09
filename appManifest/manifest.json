@@ -1,0 +1,35 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.19/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.19",
+  "version": "1.0.0",
+  "id": "${{TEAMS_APP_ID}}",
+  "developer": {
+    "name": "First Assurance IT Support",
+    "websiteUrl": "https://firstassurance.co.ke",
+    "privacyUrl": "https://firstassurance.co.ke",
+    "termsOfUseUrl": "https://firstassurance.co.ke"
+  },
+  "name": {
+    "short": "First Assurance Unlock",
+    "full": "First Assurance IT Account Unlock Bot"
+  },
+  "description": {
+    "short": "Unlock your First Assurance work account in chat",
+    "full": "Chat with First Assurance IT support to verify your identity and automatically unlock your Active Directory account."
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#DC0032",
+  "bots": [
+    {
+      "botId": "${{CLIENT_ID}}",
+      "scopes": ["personal"],
+      "supportsFiles": false,
+      "isNotificationOnly": false
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": []
+}

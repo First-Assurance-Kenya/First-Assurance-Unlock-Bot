@@ -1,0 +1,52 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.30/MicrosoftTeams.schema.json",
+  "version": "1.0.0",
+  "manifestVersion": "1.30",
+  "id": "893718b3-8c39-498b-b708-13e6c746ef88",
+  "name": {
+    "short": "First Assurance Unlock"
+  },
+  "developer": {
+    "name": "https://firstassurance.co.ke",
+    "websiteUrl": "https://firstassurance.co.ke",
+    "privacyUrl": "https://firstassurance.co.ke/privacy-policy/",
+    "termsOfUseUrl": "https://firstassurance.co.ke"
+  },
+  "description": {
+    "short": "A self service bot aiding in un locking accounts",
+    "full": "The First Assurance IT Account Unlock Bot is an automated, self-service IT support assistant built directly into Microsoft Teams.\n\nAccount lockouts due to consecutive failed password attempts represent one of the highest-volume, lowest-complexity tickets handled by the IT Service Desk. This application empowers employees to securely verify their identity and unlock their corporate Active Directory account in seconds via Teams chat—eliminating employee downtime and freeing IT personnel for high-value tasks."
+  },
+  "icons": {
+    "outline": "outline.png",
+    "color": "color.png"
+  },
+  "accentColor": "#FFFFFF",
+  "bots": [
+    {
+      "botId": "d14110fe-3594-4462-a9be-0bd8c2c421c0",
+      "scopes": [
+        "personal",
+        "team"
+      ],
+      "isNotificationOnly": false,
+      "supportsCalling": false,
+      "supportsVideo": false,
+      "supportsFiles": false
+    }
+  ],
+  "validDomains": [],
+  "webApplicationInfo": {
+    "id": "d14110fe-3594-4462-a9be-0bd8c2c421c0"
+  },
+  "defaultGroupCapability": {
+    "team": "bot",
+    "groupchat": "bot",
+    "meetings": "bot"
+  },
+  "configurableProperties": [
+    "name",
+    "shortDescription",
+    "termsOfUseUrl"
+  ],
+  "supportsChannelFeatures": "tier1"
+}
