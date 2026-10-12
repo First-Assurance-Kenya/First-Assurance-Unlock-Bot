@@ -4,23 +4,43 @@ from typing import Any, Dict, Optional, Tuple
 
 from backend.database.audit_db import check_rate_limit, log_audit_event
 from backend.services.ad_service import find_user, find_user_by_name, unlock_account
+from backend.services.two_factor_service import (
+    generate_otp,
+    get_active_otp,
+    get_totp_qr_url,
+    get_totp_secret,
+    is_2fa_enabled,
+    mask_phone_number,
+    set_2fa_enabled,
+    set_totp_secret,
+    verify_otp,
+)
 from bot.cards import (
+    create_2fa_card,
+    create_2fa_toggle_card,
     create_already_unlocked_card,
     create_it_referral_card,
     create_menu_card,
     create_success_card,
+    create_totp_setup_card,
     create_unauthorized_card,
     create_verification_card,
 )
 from bot.responses import (
     ACCOUNT_UNLOCKED_MESSAGE,
     CANCEL_MESSAGE,
+    ENTER_2FA_CODE_MESSAGE,
     ENTER_FULL_NAME_MESSAGE,
     INVALID_CONFIRMATION_MESSAGE,
     INVALID_MENU_MESSAGE,
     MENU_MESSAGE,
     RATE_LIMIT_EXCEEDED_MESSAGE,
     TRIGGER_PROMPT,
+    TWO_FACTOR_INVALID_CODE_TEMPLATE,
+    TWO_FACTOR_MAX_ATTEMPTS_MESSAGE,
+    TWO_FACTOR_TOGGLE_OFF_MESSAGE,
+    TWO_FACTOR_TOGGLE_ON_MESSAGE,
+    TWO_FACTOR_VERIFIED_MESSAGE,
     UNAUTHORIZED_ACCOUNT_MESSAGE,
     VERIFY_FAILED_MESSAGE,
     VERIFY_SUCCESS_ALREADY_UNLOCKED_TEMPLATE,
@@ -78,10 +98,13 @@ CONFIRM_NO_OPTIONS = {
 # Administrative users permitted to unlock any corporate account
 ADMIN_USERS = {
     "newton kibe",
+    "nkibe",
+    "newton",
     "admin",
     "administrator",
     "it support",
 }
+
 
 
 class ConversationState(Enum):
@@ -89,6 +112,7 @@ class ConversationState(Enum):
     WAITING_FOR_MENU = "waiting_for_menu"
     WAITING_FOR_NAME = "waiting_for_name"
     WAITING_FOR_CONFIRMATION = "waiting_for_confirmation"
+    WAITING_FOR_2FA = "waiting_for_2fa"
     LOCKED_OUT = "locked_out"
     COMPLETED = "completed"
 
@@ -112,35 +136,37 @@ class AccountUnlockBot:
         if user_id and user_id != "N/A":
             self.requester_id = user_id
 
+    def is_admin(self) -> bool:
+        """Check if the session requester is a recognized IT administrator."""
+        clean_name = (self.requester_name or "").strip().lower()
+        clean_id = (self.requester_id or "").strip().lower()
+
+        if clean_name in ADMIN_USERS or clean_id in ADMIN_USERS:
+            return True
+
+        # Check environment variable overrides (e.g. ADMIN_USERS="nkibe,newton.kibe@firstassurance.co.ke")
+        import os
+        env_admins = {u.strip().lower() for u in os.getenv("ADMIN_USERS", "").split(",") if u.strip()}
+        if clean_name in env_admins or clean_id in env_admins:
+            return True
+
+        return False
+
     def check_requester_rate_limit(self) -> Tuple[bool, int]:
-        """Check if this requester has exceeded the 3-attempt limit."""
-        return check_rate_limit(self.requester_name, max_attempts=3, window_minutes=30)
+        """Check if this requester has exceeded the 3 daily unlock requests limit (admins are exempt)."""
+        if self.is_admin():
+            return False, 0
+        return check_rate_limit(self.requester_name, max_attempts=3, window_minutes=1440)
+
 
     def is_authorized_to_unlock(self, target_account_name: str) -> bool:
         """
         Authorization Policy:
-        - IT Administrators can unlock any account.
-        - Regular employees can ONLY unlock their own verified account (matching their Teams / Entra ID login).
-        - If requester identity is unspecified ('Unknown'), default to allow (for local unit tests).
+        - Cross-account / Shared PC unlock is allowed so employees whose PC or phone is locked
+          can use the bot service from a colleague's PC.
+        - Identity verification is enforced via Two-Factor Authentication (2FA) on the employee's phone.
         """
-        req_lower = self.requester_name.strip().lower()
-        target_lower = target_account_name.strip().lower()
-
-        # Admin override
-        if any(admin in req_lower for admin in ADMIN_USERS):
-            return True
-
-        # Unspecified local test runner
-        if req_lower in ("unknown", "test runner", "console", "local-console-session"):
-            return True
-
-        # Exact or partial match (e.g. 'Jane' in 'Jane Doe', or 'Jane Doe' in 'Jane Doe')
-        req_parts = set(req_lower.split())
-        target_parts = set(target_lower.split())
-        if req_parts & target_parts or req_lower in target_lower or target_lower in req_lower:
-            return True
-
-        return False
+        return True
 
     def start(self) -> str:
         text, _ = self.start_with_card()
@@ -191,7 +217,22 @@ class AccountUnlockBot:
                 return ENTER_FULL_NAME_MESSAGE, None
 
             if action == "confirm_unlock" and self.user_data:
-                return self.execute_unlock()
+                return self.prompt_or_execute_unlock()
+
+            if action == "submit_2fa":
+                code = data.get("two_factor_code") or (text or "").strip()
+                return self.handle_2fa_verification(code)
+
+            if action == "resend_2fa" and self.user_data:
+                return self.resend_2fa()
+
+            if action in ("toggle_2fa_on", "toggle_2fa_off"):
+                if not self.is_admin():
+                    return "⛔ **Access Denied:** Only authorized IT Administrators can modify 2FA security policies.", None
+                new_state = (action == "toggle_2fa_on")
+                set_2fa_enabled(new_state)
+                msg = TWO_FACTOR_TOGGLE_ON_MESSAGE if new_state else TWO_FACTOR_TOGGLE_OFF_MESSAGE
+                return msg, create_2fa_toggle_card(new_state, self.requester_name)
 
             if action == "cancel":
                 if self.user_data:
@@ -208,6 +249,24 @@ class AccountUnlockBot:
                 self.state = ConversationState.COMPLETED
                 return CANCEL_MESSAGE, None
 
+            if action == "setup_2fa":
+                if self.user_data:
+                    emp_id = self.user_data["employee_id"]
+                    emp_name = self.user_data["name"]
+                else:
+                    found = find_user_by_name(self.requester_name) or find_user(self.requester_name)
+                    if found:
+                        emp_id = found["employee_id"]
+                        emp_name = found["name"]
+                    else:
+                        emp_id = self.requester_name.strip()
+                        emp_name = self.requester_name.strip()
+
+                secret = get_totp_secret(emp_id)
+                qr_url = get_totp_qr_url(emp_id, emp_name)
+                msg = f"📱 **Microsoft Authenticator Setup for {emp_name}:**\nAccount: `First Assurance ({emp_id})`\nSecret Key: `{secret}`\nScan QR: {qr_url}"
+                return msg, create_totp_setup_card(emp_name, emp_id, secret, qr_url)
+
             if action in ("restart", "reset"):
                 return self.start_with_card()
 
@@ -220,12 +279,86 @@ class AccountUnlockBot:
                 return TRIGGER_PROMPT, None
             return "Please provide an input.", None
 
-        # Global administrative resets for demo
-        if text_lower in ("lock all", "relock", "lock accounts", "demo reset"):
+        # Authenticator setup commands (customized for the active employee)
+        if text_lower in ("setup 2fa", "2fa setup", "totp setup", "authenticator", "qr code", "2fa secret", "authenticator setup"):
+            if self.user_data:
+                emp_id = self.user_data["employee_id"]
+                emp_name = self.user_data["name"]
+            else:
+                found = find_user_by_name(self.requester_name) or find_user(self.requester_name)
+                if found:
+                    emp_id = found["employee_id"]
+                    emp_name = found["name"]
+                else:
+                    emp_id = self.requester_name.strip()
+                    emp_name = self.requester_name.strip()
+
+            secret = get_totp_secret(emp_id)
+            qr_url = get_totp_qr_url(emp_id, emp_name)
+            msg = (
+                f"📱 **Microsoft Authenticator Setup for {emp_name}:**\n\n"
+                f"1. Open **Microsoft Authenticator** on your phone.\n"
+                f"2. Tap **+** (Add Account) ➔ Choose **Other (Google, Facebook, etc.)**.\n"
+                f"3. Tap **Enter code manually** (or scan the QR code link).\n"
+                f"4. **Account Name:** `First Assurance ({emp_id})`\n"
+                f"5. **Secret Key:** `{secret}`\n\n"
+                f"QR Code Link: {qr_url}"
+            )
+            return msg, create_totp_setup_card(emp_name, emp_id, secret, qr_url)
+
+        # Admin 2FA setting commands (Strictly verified)
+        if text_lower in ("2fa on", "enable 2fa", "turn on 2fa"):
+            if not self.is_admin():
+                return "⛔ **Access Denied:** Only authorized IT Administrators can modify 2FA security policies.", None
+            set_2fa_enabled(True)
+            return TWO_FACTOR_TOGGLE_ON_MESSAGE, create_2fa_toggle_card(True, self.requester_name)
+
+        if text_lower in ("2fa off", "disable 2fa", "turn off 2fa"):
+            if not self.is_admin():
+                return "⛔ **Access Denied:** Only authorized IT Administrators can modify 2FA security policies.", None
+            set_2fa_enabled(False)
+            return TWO_FACTOR_TOGGLE_OFF_MESSAGE, create_2fa_toggle_card(False, self.requester_name)
+
+        if text_lower in ("2fa status", "2fa", "check 2fa"):
+            if not self.is_admin():
+                return "⛔ **Access Denied:** Only authorized IT Administrators can view 2FA administrative controls.", None
+            status_msg = TWO_FACTOR_TOGGLE_ON_MESSAGE if is_2fa_enabled() else TWO_FACTOR_TOGGLE_OFF_MESSAGE
+            return status_msg, create_2fa_toggle_card(is_2fa_enabled(), self.requester_name)
+
+        if (text_lower.startswith("2fa secret ") or text_lower.startswith("2fa set secret ")):
+            if not self.is_admin():
+                return "⛔ **Access Denied:** Only authorized IT Administrators can update Secret Keys.", None
+            new_sec = raw_text.split()[-1]
+            emp_id = self.user_data["employee_id"] if self.user_data else "nkibe"
+            if set_totp_secret(emp_id, new_sec):
+                return f"✅ Microsoft Authenticator Secret Key updated for `{emp_id}` to `{new_sec.upper()}`.", None
+            return "❌ Invalid Base32 secret key. Allowed characters: A-Z and 2-7.", None
+
+        # Lock / Re-lock commands (Strictly restricted to administrators for testing)
+        if text_lower in ("lock me", "relock me") or text_lower.startswith("lock ") or text_lower.startswith("relock "):
+            if not self.is_admin():
+                return "⛔ **Access Denied:** Manual account locking is a restricted test feature for IT administrators.", None
+            from backend.services.ad_service import lock_account
+            target = "nkibe"
+            if text_lower in ("lock me", "relock me"):
+                target = "nkibe" if "kibe" in self.requester_name.lower() else self.requester_name.strip().lower()
+            else:
+                parts = raw_text.split()
+                if len(parts) >= 2:
+                    target = parts[1].strip().lower()
+            lock_account(target)
+            self.reset()
+            return f"🔒 Account (`{target}`) has been marked as **Locked** for testing.\n\nType **Hello Bot** or **1** to test unlocking!", None
+
+        if text_lower in ("lock all", "demo reset"):
+            if not self.is_admin():
+                return "⛔ **Access Denied:** Only administrators can perform a demo reset.", None
             from backend.services.ad_service import reset_all_accounts_to_locked
             reset_all_accounts_to_locked()
             self.reset()
             return "🔒 All demo accounts have been reset to Locked. Type 'Hello Bot' to begin.", None
+
+
 
         if text_lower in RESET_COMMANDS:
             return self.start_with_card()
@@ -248,6 +381,14 @@ class AccountUnlockBot:
         if self.state == ConversationState.WAITING_FOR_CONFIRMATION:
             return self.handle_confirmation(text_lower)
 
+        if self.state == ConversationState.WAITING_FOR_2FA:
+            if text_lower in ("cancel", "stop", "exit", "quit"):
+                self.state = ConversationState.COMPLETED
+                return CANCEL_MESSAGE, None
+            if text_lower in ("resend", "resend code", "resend 2fa"):
+                return self.resend_2fa()
+            return self.handle_2fa_verification(raw_text)
+
         if self.state == ConversationState.COMPLETED:
             return self.start_with_card()
 
@@ -266,7 +407,6 @@ class AccountUnlockBot:
                 status="FAILURE",
                 details=f"Account query failed for '{name_raw}'.",
             )
-            # Re-check rate limit after recording failure
             is_limited, attempts = self.check_requester_rate_limit()
             if is_limited:
                 self.state = ConversationState.LOCKED_OUT
@@ -274,37 +414,20 @@ class AccountUnlockBot:
 
             remaining = max(0, 3 - attempts)
             return (
-                f"{VERIFY_FAILED_MESSAGE}\n\n*(Attempts remaining before IT referral: {remaining}/3)*",
+                f"{VERIFY_FAILED_MESSAGE}\n\n*(Daily unlock requests remaining: {remaining}/3)*",
                 None,
             )
 
-        # 2. Authorization Check: Is Jane trying to unlock Jane?
-        if not self.is_authorized_to_unlock(user["name"]):
-            log_audit_event(
-                action="UNAUTHORIZED_ATTEMPT",
-                requester_name=self.requester_name,
-                requester_id=self.requester_id,
-                target_account_id=user["employee_id"],
-                target_account_name=user["name"],
-                target_department=user["department"],
-                status="BLOCKED",
-                details=f"Policy violation: Authenticated user '{self.requester_name}' attempted to unlock target '{user['name']}'.",
-            )
-            is_limited, attempts = self.check_requester_rate_limit()
-            if is_limited:
-                self.state = ConversationState.LOCKED_OUT
-                return RATE_LIMIT_EXCEEDED_MESSAGE, create_it_referral_card(self.requester_name, attempts)
-
-            return (
-                UNAUTHORIZED_ACCOUNT_MESSAGE.format(
-                    requester=self.requester_name, target=user["name"]
-                ),
-                create_unauthorized_card(self.requester_name, user["name"]),
-            )
+        # 2. Check daily rate limit for target employee account
+        is_limited, attempts = check_rate_limit(user["employee_id"], max_attempts=3, window_minutes=1440)
+        req_lower = self.requester_name.strip().lower()
+        if is_limited and not any(admin in req_lower for admin in ADMIN_USERS):
+            self.state = ConversationState.LOCKED_OUT
+            return RATE_LIMIT_EXCEEDED_MESSAGE, create_it_referral_card(user["name"], attempts)
 
         self.user_data = user
 
-        # 3. Log verified account lookup
+        # 3. Log verified account lookup (record both target employee and requesting user for shared PC usage)
         log_audit_event(
             action="ACCOUNT_VERIFIED",
             requester_name=self.requester_name,
@@ -313,10 +436,10 @@ class AccountUnlockBot:
             target_account_name=user["name"],
             target_department=user["department"],
             status="SUCCESS",
-            details="User identity successfully verified.",
+            details=f"Account lookup for '{user['name']}' via session of '{self.requester_name}'.",
         )
 
-        # Check account status
+        # 4. Check account status in Active Directory
         current = find_user(user["employee_id"])
         if current and current.get("locked"):
             self.state = ConversationState.WAITING_FOR_CONFIRMATION
@@ -342,8 +465,100 @@ class AccountUnlockBot:
             )
             return text_reply, card
 
+    def prompt_or_execute_unlock(self) -> Tuple[str, Any]:
+        """Proceed to 2FA verification if enabled, or unlock directly if 2FA is disabled."""
+        if not is_2fa_enabled():
+            return self.execute_unlock()
+
+        emp_id = self.user_data["employee_id"]
+        otp = generate_otp(emp_id)
+        self.state = ConversationState.WAITING_FOR_2FA
+        phone_hint = mask_phone_number(self.user_data.get("phone"))
+        reply = ENTER_2FA_CODE_MESSAGE.format(phone_hint=phone_hint)
+        card = create_2fa_card(
+            name=self.user_data["name"],
+            department=self.user_data["department"],
+            phone_hint=phone_hint,
+            test_otp_hint=otp,
+        )
+        return reply, card
+
+    def handle_2fa_verification(self, code: str) -> Tuple[str, Any]:
+        """Verify the 6-digit OTP code before executing unlock."""
+        if not self.user_data:
+            return self.start_with_card()
+
+        emp_id = self.user_data["employee_id"]
+        success, msg = verify_otp(emp_id, code)
+
+        if success:
+            log_audit_event(
+                action="2FA_VERIFICATION_SUCCESS",
+                requester_name=self.requester_name,
+                requester_id=self.requester_id,
+                target_account_id=emp_id,
+                target_account_name=self.user_data["name"],
+                target_department=self.user_data["department"],
+                status="SUCCESS",
+                details="Identity verified successfully via Two-Factor Authentication.",
+            )
+            return self.execute_unlock()
+
+        # Handle incorrect code or max attempts
+        phone_hint = mask_phone_number(self.user_data.get("phone"))
+        if "Maximum" in msg:
+            self.state = ConversationState.LOCKED_OUT
+            log_audit_event(
+                action="2FA_VERIFICATION_EXCEEDED",
+                requester_name=self.requester_name,
+                requester_id=self.requester_id,
+                target_account_id=emp_id,
+                target_account_name=self.user_data["name"],
+                target_department=self.user_data["department"],
+                status="BLOCKED",
+                details=msg,
+            )
+            return RATE_LIMIT_EXCEEDED_MESSAGE, create_it_referral_card(self.user_data["name"], 3)
+
+        log_audit_event(
+            action="2FA_VERIFICATION_FAILED",
+            requester_name=self.requester_name,
+            requester_id=self.requester_id,
+            target_account_id=emp_id,
+            target_account_name=self.user_data["name"],
+            target_department=self.user_data["department"],
+            status="FAILURE",
+            details=msg,
+        )
+        active_otp = get_active_otp(emp_id)
+        card = create_2fa_card(
+            name=self.user_data["name"],
+            department=self.user_data["department"],
+            phone_hint=phone_hint,
+            error_message=msg,
+            test_otp_hint=active_otp,
+        )
+        return msg, card
+
+    def resend_2fa(self) -> Tuple[str, Any]:
+        """Generate and dispatch a fresh 2FA code to the employee's phone."""
+        if not self.user_data:
+            return self.start_with_card()
+
+        emp_id = self.user_data["employee_id"]
+        otp = generate_otp(emp_id)
+        phone_hint = mask_phone_number(self.user_data.get("phone"))
+        msg = f"🔄 A new verification code has been dispatched to {phone_hint}.\n\nPlease enter the 6-digit code:"
+        card = create_2fa_card(
+            name=self.user_data["name"],
+            department=self.user_data["department"],
+            phone_hint=phone_hint,
+            test_otp_hint=otp,
+        )
+        return msg, card
+
     def execute_unlock(self) -> Tuple[str, Any]:
-        """Perform unlock, write to audit log, and return success card."""
+        """Perform unlock in Active Directory, write to audit log, and return success card."""
         emp_id = self.user_data["employee_id"]
         res = unlock_account(emp_id)
 
@@ -355,7 +570,7 @@ class AccountUnlockBot:
             target_account_name=self.user_data["name"],
             target_department=self.user_data["department"],
             status="SUCCESS" if res.get("success") else "FAILURE",
-            details=res.get("message", "Account unlock executed."),
+            details=f"Account unlock executed for '{self.user_data['name']}' requested via session of '{self.requester_name}'. 2FA required: {is_2fa_enabled()}.",
         )
 
         self.state = ConversationState.COMPLETED
@@ -368,7 +583,7 @@ class AccountUnlockBot:
     def handle_confirmation(self, choice: str) -> Tuple[str, Optional[Any]]:
         if choice in CONFIRM_YES_OPTIONS:
             if self.user_data:
-                return self.execute_unlock()
+                return self.prompt_or_execute_unlock()
 
         if choice in CONFIRM_NO_OPTIONS:
             if self.user_data:

@@ -24,14 +24,22 @@ def test_ad():
 
     import ldap3
 
-    server_uri = os.getenv("AD_LDAP_SERVER", "")
-    domain = os.getenv("AD_DOMAIN", "")
-    base_dn = os.getenv("AD_BASE_DN", "")
-    user = os.getenv("AD_BIND_USER", "").strip()
+    server_uri = os.getenv("AD_LDAP_SERVER", "ldap://172.17.0.220:389")
+    domain = os.getenv("AD_DOMAIN", "firstassurance.co.ke")
+    base_dn = os.getenv("AD_BASE_DN", "DC=firstassurance,DC=co,DC=ke")
+    user = os.getenv("AD_BIND_USER", "nkibe").strip()
     password = os.getenv("AD_BIND_PASSWORD", "").strip()
 
+    if not password:
+        import getpass
+        print("\n--- Active Directory Authentication Required ---")
+        prompted_user = input(f"Enter AD Username [{user}]: ").strip()
+        if prompted_user:
+            user = prompted_user
+        password = getpass.getpass(f"Enter AD Password for '{user}': ")
+
     if not (server_uri and user and password):
-        print("[ERROR] Production AD environment variables are not configured.")
+        print("[ERROR] Credentials or LDAP server missing.")
         return
 
     print("=" * 65)
@@ -45,15 +53,17 @@ def test_ad():
     print(f"\n[1] Connecting to LDAP Server: {server_uri} ...")
     server = ldap3.Server(server_uri, get_info=ldap3.NONE, connect_timeout=5)
 
-    conn = None
-    for auth_type, auth_name in [(ldap3.SIMPLE, "SIMPLE"), (ldap3.NTLM, "NTLM")]:
-        try:
-            bind_name = user
-            if auth_type == ldap3.NTLM and domain:
-                username_only = user.split("@")[0].split("\\")[-1]
-                bind_name = f"{domain}\\{username_only}"
+    username_only = user.split("@")[0].split("\\")[-1]
+    candidate_binds = [
+        (ldap3.NTLM, f"{domain}\\{username_only}" if domain else username_only, "NTLM"),
+        (ldap3.SIMPLE, f"{username_only}@{domain}" if domain else user, "SIMPLE (UPN)"),
+        (ldap3.SIMPLE, username_only, "SIMPLE (username)"),
+        (ldap3.NTLM, username_only, "NTLM (username)"),
+    ]
 
-            print(f"[*] Attempting {auth_name} authentication...")
+    for auth_type, bind_name, auth_name in candidate_binds:
+        try:
+            print(f"[*] Attempting {auth_name} authentication ({bind_name})...")
             c = ldap3.Connection(server, user=bind_name, password=password, authentication=auth_type, auto_bind=False)
             if c.bind():
                 print(f"[✓] Successfully authenticated via {auth_name}!")

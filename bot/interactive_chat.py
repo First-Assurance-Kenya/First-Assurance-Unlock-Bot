@@ -21,6 +21,8 @@ def format_card_preview(card) -> str:
         for elem in elements:
             if hasattr(elem, "text"):
                 lines.append(f"  {elem.text}")
+            elif hasattr(elem, "placeholder"):
+                lines.append(f"  [Input Field ({getattr(elem, 'id', 'input')}): {elem.placeholder}]")
             elif hasattr(elem, "facts"):
                 for fact in elem.facts:
                     lines.append(f"    • {fact.title}: {fact.value}")
@@ -38,24 +40,32 @@ def format_card_preview(card) -> str:
 
 
 def main():
+    import os
     conversation_id = "local-console-session"
+    data_source = os.getenv("DATA_SOURCE", "mock").lower()
+    requester = "Newton Kibe"
+
     print("=" * 65)
-    print("  FIRST ASSURANCE IT Account Unlock Bot - Interactive Test")
+    print("  FIRST ASSURANCE IT Account Unlock Bot - Interactive Terminal Chat")
     print("=" * 65)
-    print(" Available Test Users in Mock Active Directory:")
-    print("   * Test Employee One   | Information Technology | Locked 🔒 (EMP001)")
-    print("   * Test Employee Two   | Finance                | Active 🟢 (EMP002)")
-    print("   * Test Employee Three | Human Resources        | Locked 🔒 (EMP003)")
-    print("   * Jane Doe            | Human Resources        | Locked 🔒")
-    print("   * Alex Johnson        | Finance                | Locked 🔒")
+    if data_source == "real":
+        print("  MODE: LIVE CORPORATE ACTIVE DIRECTORY")
+        print("  Domain: firstassurance.co.ke | Server: 172.17.0.220:389")
+        print(f"  Simulated Authenticated User: {requester}")
+    else:
+        print("  MODE: MOCK DATA ENVIRONMENT")
+        print("  Available Test Users: Jane Doe, Alex Johnson, Test Employee One")
     print("=" * 65)
     print(" Flow:")
     print("   1. Type 'Hello Bot' to get started.")
-    print("   2. Type '1' or 'unlock' (or click [🔓 Unlock Account]).")
-    print("   3. Enter Full Name (e.g. Jane Doe or Alex Johnson).")
-    print("   4. Verify Department & Status on Adaptive Card.")
-    print("   5. Type 'Yes' (or click [🔓 Yes, Unlock Account]).")
+    print("   2. Type '1' to select Unlock Account.")
+    print("   3. Enter Full Name (e.g. Newton Kibe or any employee).")
+    print("   4. Type 'Yes' to confirm.")
+    print("   5. If 2FA is active, enter the 6-digit code from Microsoft Authenticator.")
+    print("   * Useful Commands: 'setup 2fa' (show Authenticator key/QR), 'lock me', '2fa on/off'")
+    print("   * Type 'exit' or 'quit' to close.")
     print("=" * 65)
+
 
     while True:
         try:
@@ -70,7 +80,9 @@ def main():
             print("Session ended.")
             break
 
-        reply_text, card = handle_user_input(conversation_id, text=user_input)
+        reply_text, card = handle_user_input(
+            conversation_id, text=user_input, requester_name=requester
+        )
         print(f"\nBot:\n{reply_text}")
         if card:
             print(format_card_preview(card))

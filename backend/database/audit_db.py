@@ -42,44 +42,41 @@ def is_postgres_configured() -> bool:
     return bool(os.getenv("DATABASE_URL") or os.getenv("PG_HOST") or os.getenv("PG_DATABASE"))
 
 
+_persistent_pg_conn = None
+
+
 def get_postgres_connection():
-    """Attempt connecting to PostgreSQL via DATABASE_URL or individual PG_* vars."""
+    """Maintain a fast, persistent PostgreSQL connection to avoid connection lag."""
+    global _persistent_pg_conn
+    if _persistent_pg_conn is not None:
+        try:
+            if not _persistent_pg_conn.closed:
+                return _persistent_pg_conn
+        except Exception:
+            _persistent_pg_conn = None
+
     try:
         import psycopg2
         from psycopg2.extras import RealDictCursor
 
         db_url = os.getenv("DATABASE_URL")
+        candidate_urls = []
         if db_url:
-            # On this network, PostgreSQL on 172.17.0.218 is tunneled through localhost:5432.
-            # Try localhost first for immediate (0.2s) response instead of waiting for external SYN timeout.
-            candidate_urls = [
-                db_url.replace("172.17.0.218", "localhost") if "172.17.0.218" in db_url else db_url,
-                db_url,
-            ]
-            for target_url in candidate_urls:
-                try:
-                    return psycopg2.connect(target_url, connect_timeout=2, cursor_factory=RealDictCursor)
-                except Exception:
-                    continue
+            candidate_urls.append(db_url.replace("172.17.0.218", "localhost") if "172.17.0.218" in db_url else db_url)
+            candidate_urls.append(db_url)
 
-        host = os.getenv("PG_HOST", "localhost")
-        port = int(os.getenv("PG_PORT", "5432"))
-        db = os.getenv("PG_DATABASE", "unlock")
-        user = os.getenv("PG_USER", "unlock_user")
-        password = os.getenv("PG_PASSWORD", "")
-
-        return psycopg2.connect(
-            host=host,
-            port=port,
-            database=db,
-            user=user,
-            password=password,
-            connect_timeout=3,
-            cursor_factory=RealDictCursor,
-        )
+        for target_url in candidate_urls:
+            try:
+                conn = psycopg2.connect(target_url, connect_timeout=1, cursor_factory=RealDictCursor)
+                conn.autocommit = True
+                _persistent_pg_conn = conn
+                return _persistent_pg_conn
+            except Exception:
+                continue
     except Exception as exc:
         logger.debug("PostgreSQL connection not available (%s), falling back to SQLite", exc)
         return None
+    return None
 
 
 # -----------------------------------------------------------------------------
@@ -188,9 +185,9 @@ def log_audit_event(
                         logger.info("Logged audit event #%s to PostgreSQL [%s.%s]", last_id, schema, table)
                         return last_id
             except Exception as e:
+                global _persistent_pg_conn
+                _persistent_pg_conn = None
                 logger.warning("Failed to insert into PostgreSQL (%s). Falling back to SQLite.", e)
-            finally:
-                pg_conn.close()
 
     # Fallback to SQLite
     target_db = get_db_path(env)
@@ -224,9 +221,10 @@ def log_audit_event(
 
 def count_recent_failed_attempts(
     requester_name: str,
-    window_minutes: int = 30,
+    window_minutes: int = 1440,
     environment: Optional[str] = None,
 ) -> int:
+    """Count unlock requests and failed attempts within the 24-hour daily window."""
     env = environment or get_current_environment()
     schema = get_target_schema(env)
     cutoff = datetime.now() - timedelta(minutes=window_minutes)
@@ -241,8 +239,7 @@ def count_recent_failed_attempts(
                         f"""
                         SELECT COUNT(*) AS cnt FROM {table}
                         WHERE requested_by = %s
-                          AND status IN ('FAILURE', 'BLOCKED', 'RATE_LIMITED')
-                          AND action_taken IN ('UNLOCK_ATTEMPT', 'VERIFY_FAILED', 'UNAUTHORIZED_ATTEMPT', 'RATE_LIMITED_REFERRED_TO_IT')
+                          AND action_taken IN ('UNLOCK_SUCCESS', 'UNLOCK_ATTEMPT', 'UNLOCK_FAILED', 'VERIFY_FAILED', 'UNAUTHORIZED_ATTEMPT')
                           AND event_timestamp >= %s
                         """,
                         (requester_name, cutoff),
@@ -250,9 +247,9 @@ def count_recent_failed_attempts(
                     row = cur.fetchone()
                     return row["cnt"] if row else 0
             except Exception as e:
+                global _persistent_pg_conn
+                _persistent_pg_conn = None
                 logger.warning("PostgreSQL count failed (%s), fallback to SQLite", e)
-            finally:
-                pg_conn.close()
 
     target_db = get_db_path(env)
     cutoff_iso = cutoff.isoformat()
@@ -262,8 +259,7 @@ def count_recent_failed_attempts(
             """
             SELECT COUNT(*) AS cnt FROM audit_logs
             WHERE requester_name = ?
-              AND status IN ('FAILURE', 'BLOCKED', 'RATE_LIMITED')
-              AND action IN ('UNLOCK_ATTEMPT', 'VERIFY_FAILED', 'UNAUTHORIZED_ATTEMPT', 'RATE_LIMITED_REFERRED_TO_IT')
+              AND action IN ('UNLOCK_SUCCESS', 'UNLOCK_ATTEMPT', 'UNLOCK_FAILED', 'VERIFY_FAILED', 'UNAUTHORIZED_ATTEMPT')
               AND timestamp >= ?
             """,
             (requester_name, cutoff_iso),
@@ -275,15 +271,31 @@ def count_recent_failed_attempts(
 def check_rate_limit(
     requester_name: str,
     max_attempts: int = 3,
-    window_minutes: int = 30,
+    window_minutes: int = 1440,
     environment: Optional[str] = None,
 ) -> Tuple[bool, int]:
+    """Check if requester has exceeded the 3 daily unlock requests limit (24 hours)."""
     attempts = count_recent_failed_attempts(
         requester_name, window_minutes=window_minutes, environment=environment
     )
     if attempts >= max_attempts:
         return True, attempts
     return False, attempts
+
+
+def reset_rate_limit(requester_name: str, environment: Optional[str] = None) -> None:
+    """Clear failed attempts for a user (useful for admin testing)."""
+    env = environment or get_current_environment()
+    target_db = get_db_path(env)
+    try:
+        with get_sqlite_connection(target_db) as conn:
+            conn.execute(
+                "DELETE FROM audit_logs WHERE requester_name = ? AND status IN ('FAILURE', 'BLOCKED', 'RATE_LIMITED')",
+                (requester_name,),
+            )
+            conn.commit()
+    except Exception:
+        pass
 
 
 def get_audit_logs(limit: int = 50, environment: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -310,9 +322,9 @@ def get_audit_logs(limit: int = 50, environment: Optional[str] = None) -> List[D
                     )
                     return [dict(r) for r in cur.fetchall()]
             except Exception as e:
+                global _persistent_pg_conn
+                _persistent_pg_conn = None
                 logger.warning("PostgreSQL query failed (%s), fallback to SQLite", e)
-            finally:
-                pg_conn.close()
 
     target_db = get_db_path(env)
     if not target_db.exists():

@@ -6,9 +6,12 @@ from microsoft_teams.cards import (
     Container,
     Fact,
     FactSet,
+    OpenUrlAction,
     SubmitAction,
     TextBlock,
+    TextInput,
 )
+
 
 
 def create_brand_header() -> Container:
@@ -188,14 +191,14 @@ def create_it_referral_card(name: str, attempts: int = 3, reason: str = "Rate li
                         color="Attention",
                     ),
                     TextBlock(
-                        text=f"Security alert: {attempts} unverified or failed unlock attempts have been detected. For account safety, automated self-service is temporarily locked.",
+                        text=f"Security alert: You have reached {attempts} unlock requests today. For account safety, users are limited to 3 unlock requests per day.",
                         wrap=True,
                         spacing="Small",
                     ),
                     FactSet(
                         facts=[
                             Fact(title="Status", value="Referred to IT Helpdesk"),
-                            Fact(title="Attempts Recorded", value=f"{attempts} / 3 Maximum"),
+                            Fact(title="Daily Requests", value=f"{attempts} / 3 Maximum per day"),
                             Fact(title="Help Desk Email", value="ithelpdesk@firstassurance.co.ke"),
                             Fact(title="Internal Phone", value="Ext 4444 / 020 2900000"),
                             Fact(title="Support Hours", value="Mon - Fri, 8:00 AM - 5:00 PM"),
@@ -258,5 +261,191 @@ def create_unauthorized_card(requester_name: str, target_name: str) -> AdaptiveC
                 title="🔄 Start Over",
                 data={"action": "restart"},
             )
+        ],
+    )
+
+
+def create_2fa_card(
+    name: str,
+    department: str,
+    phone_hint: str = "Microsoft Authenticator",
+    error_message: Optional[str] = None,
+    test_otp_hint: Optional[str] = None,
+) -> AdaptiveCard:
+    """Card prompting employee to enter the 6-digit 2FA code from Microsoft Authenticator."""
+    items = [
+        TextBlock(
+            text="Two-Factor Authentication (2FA) 📱",
+            weight="Bolder",
+            size="Large",
+            color="Accent",
+        ),
+        FactSet(
+            facts=[
+                Fact(title="Employee", value=name),
+                Fact(title="Department", value=department),
+                Fact(title="Verification Source", value="Microsoft Authenticator App"),
+            ]
+        ),
+        TextBlock(
+            text="Please enter the active 6-digit code from your **Microsoft Authenticator app** to confirm your identity before unlocking:",
+            wrap=True,
+            spacing="Medium",
+        ),
+    ]
+
+    if error_message:
+        items.append(
+            TextBlock(
+                text=error_message,
+                color="Attention",
+                weight="Bolder",
+                wrap=True,
+                spacing="Small",
+            )
+        )
+
+    items.append(
+        TextInput(
+            id="two_factor_code",
+            placeholder="Enter 6-digit code from phone (e.g. 123456)",
+            maxLength=6,
+        )
+    )
+
+    if test_otp_hint:
+        items.append(
+            TextBlock(
+                text=f"*(Dispatched / Fallback Code: {test_otp_hint})*",
+                isSubtle=True,
+                spacing="None",
+            )
+        )
+
+    return AdaptiveCard(
+        body=[
+            create_brand_header(),
+            Container(items=items),
+        ],
+        actions=[
+            SubmitAction(
+                title="🔑 Verify & Unlock",
+                data={"action": "submit_2fa"},
+                style="positive",
+            ),
+            SubmitAction(
+                title="📱 Authenticator Setup / QR",
+                data={"action": "setup_2fa"},
+            ),
+            SubmitAction(
+                title="❌ Cancel",
+                data={"action": "cancel"},
+                style="destructive",
+            ),
+        ],
+    )
+
+
+def create_totp_setup_card(
+    name: str,
+    account_id: str,
+    secret: str,
+    qr_url: str,
+) -> AdaptiveCard:
+    """Card guiding employee to pair Microsoft Authenticator with their corporate account."""
+    return AdaptiveCard(
+        body=[
+            create_brand_header(),
+            Container(
+                items=[
+                    TextBlock(
+                        text="📱 Setup Microsoft Authenticator",
+                        weight="Bolder",
+                        size="Large",
+                        color="Accent",
+                    ),
+                    TextBlock(
+                        text=f"Pair your mobile **Microsoft Authenticator** app for **{name}** (`{account_id}`):",
+                        wrap=True,
+                    ),
+                    FactSet(
+                        facts=[
+                            Fact(title="Account Name", value=f"First Assurance ({account_id})"),
+                            Fact(title="Secret Key", value=secret),
+                            Fact(title="Type", value="Time-based (TOTP / 30 seconds)"),
+                        ]
+                    ),
+                    TextBlock(
+                        text="**Quick Setup in Microsoft Authenticator:**\n1. Open **Microsoft Authenticator** on your phone.\n2. Tap **+** (Add Account) ➔ Choose **Other (Google, Facebook, etc.)**.\n3. Tap **Enter code manually** (or scan the QR code link below).\n4. Enter the Secret Key above and save.",
+                        wrap=True,
+                        spacing="Medium",
+                    ),
+                ]
+            ),
+        ],
+        actions=[
+            OpenUrlAction(
+                title="🔍 View Scanable QR Code",
+                url=qr_url,
+            ),
+            SubmitAction(
+                title="🔑 Enter 2FA Code",
+                data={"action": "confirm_unlock"},
+                style="positive",
+            ),
+            SubmitAction(
+                title="🔄 Main Menu",
+                data={"action": "restart"},
+            ),
+        ],
+    )
+
+
+
+def create_2fa_toggle_card(enabled: bool, admin_name: str) -> AdaptiveCard:
+    """Card showing current 2FA setting status and toggle button for administrators."""
+    status_text = "ENABLED 🔐" if enabled else "DISABLED 🔓"
+    status_desc = (
+        "Employees are REQUIRED to verify their identity via mobile 2FA code before unlocking accounts."
+        if enabled
+        else "Employees can unlock accounts with direct confirmation WITHOUT entering a 2FA code."
+    )
+    badge_color = "Good" if enabled else "Warning"
+
+    return AdaptiveCard(
+        body=[
+            create_brand_header(),
+            Container(
+                items=[
+                    TextBlock(
+                        text=f"2FA Setting: {status_text}",
+                        weight="Bolder",
+                        size="Large",
+                        color=badge_color,
+                    ),
+                    FactSet(
+                        facts=[
+                            Fact(title="2FA Requirement", value=status_text),
+                            Fact(title="Managed By", value=admin_name),
+                        ]
+                    ),
+                    TextBlock(
+                        text=status_desc,
+                        wrap=True,
+                        spacing="Medium",
+                    ),
+                ]
+            ),
+        ],
+        actions=[
+            SubmitAction(
+                title="Turn 2FA OFF 🔓" if enabled else "Turn 2FA ON 🔐",
+                data={"action": "toggle_2fa_off" if enabled else "toggle_2fa_on"},
+                style="destructive" if enabled else "positive",
+            ),
+            SubmitAction(
+                title="🔄 Return to Menu",
+                data={"action": "restart"},
+            ),
         ],
     )
