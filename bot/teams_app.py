@@ -15,8 +15,9 @@ from dotenv import load_dotenv
 
 load_dotenv(ROOT / ".env")
 
-from microsoft_teams.api import MessageActivity
+from microsoft_teams.api import MessageActivity, TypingActivityInput
 from microsoft_teams.apps import ActivityContext, App
+
 
 from bot.teams_session import get_session, handle_user_input
 
@@ -27,12 +28,20 @@ logging.basicConfig(
 logger = logging.getLogger("account-unlock-bot")
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from microsoft_teams.apps.http.fastapi_adapter import FastAPIAdapter
 
 # Enterprise Security Hardening:
 # Disable Swagger docs, Redoc, and OpenAPI schemas so no endpoint schema is exposed
 secure_fastapi = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+
+# Mount corporate brand assets directory for logo delivery
+assets_dir = ROOT / "assets"
+assets_dir.mkdir(exist_ok=True)
+secure_fastapi.mount("/static", StaticFiles(directory=assets_dir), name="static")
+
 adapter = FastAPIAdapter(app=secure_fastapi)
+
 
 allow_unauth = os.getenv("DANGEROUSLY_ALLOW_UNAUTHENTICATED_REQUESTS", "false").lower() == "true"
 
@@ -46,6 +55,11 @@ app = App(
 
 
 async def send_welcome(ctx: ActivityContext) -> None:
+    try:
+        await ctx.send(TypingActivityInput())
+    except Exception as e:
+        logger.debug("Typing indicator suppressed: %s", e)
+
     conversation_id = ctx.activity.conversation.id
     sender_name = ctx.activity.from_.name if ctx.activity.from_ else "Unknown"
     sender_id = ctx.activity.from_.id if ctx.activity.from_ else "N/A"
@@ -78,6 +92,12 @@ async def handle_message(ctx: ActivityContext[MessageActivity]) -> None:
         conversation_id,
     )
 
+    # Immediately show the 3 animated typing dots in Teams chat for responsive UX
+    try:
+        await ctx.send(TypingActivityInput())
+    except Exception as e:
+        logger.debug("Typing indicator suppressed: %s", e)
+
     reply_text, card = handle_user_input(
         conversation_id,
         text=activity_text,
@@ -90,6 +110,7 @@ async def handle_message(ctx: ActivityContext[MessageActivity]) -> None:
         await ctx.send(card)
     else:
         await ctx.send(reply_text.strip())
+
 
 
 if __name__ == "__main__":

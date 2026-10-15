@@ -1,0 +1,82 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "1. Start Dev Tunnel",
+      "type": "shell",
+      "command": "devtunnel host spiffy-fog-m1hf0t6",
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": {
+          "regexp": "^$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": ".*Ready to accept connections.*"
+        }
+      },
+      "presentation": {
+        "group": "unlock-system",
+        "panel": "dedicated",
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "2. Start Teams Bot",
+      "type": "shell",
+      "command": "python bot/teams_app.py",
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": {
+          "regexp": "^$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": ".*Uvicorn running on.*"
+        }
+      },
+      "presentation": {
+        "group": "unlock-system",
+        "panel": "dedicated",
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "3. Start Backend API",
+      "type": "shell",
+      "command": "python -m uvicorn backend.main:app --reload --port 8000",
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": {
+          "regexp": "^$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": ".*Application startup complete.*"
+        }
+      },
+      "presentation": {
+        "group": "unlock-system",
+        "panel": "dedicated",
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "Start All Services (Tunnel + Bot + Backend)",
+      "dependsOn": [
+        "1. Start Dev Tunnel",
+        "2. Start Teams Bot",
+        "3. Start Backend API"
+      ],
+      "dependsOrder": "parallel",
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    }
+  ]
+}

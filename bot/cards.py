@@ -1,11 +1,12 @@
 from typing import Optional
 
-from bot.theme import CARD_HEADER_SUBTITLE, CARD_HEADER_TITLE
+from bot.theme import CARD_HEADER_SUBTITLE, CARD_HEADER_TITLE, LOGO_PUBLIC_URL
 from microsoft_teams.cards import (
     AdaptiveCard,
     Container,
     Fact,
     FactSet,
+    Image,
     OpenUrlAction,
     SubmitAction,
     TextBlock,
@@ -15,48 +16,94 @@ from microsoft_teams.cards import (
 
 
 def create_brand_header() -> Container:
-    """Branded top banner for First Assurance company."""
+    """Branded top banner for First Assurance company with official logo and corporate styling."""
+    header_items = []
+    if LOGO_PUBLIC_URL:
+        header_items.append(
+            Image(
+                url=LOGO_PUBLIC_URL,
+                alt_text="First Assurance - Insure • Secure • Assure",
+                size="Stretch",
+                horizontal_alignment="Center",
+            )
+        )
+
+    header_items.append(
+        TextBlock(
+            text="🔒 IT Account Unlock Portal",
+            weight="Bolder",
+            size="Medium",
+            spacing="Small",
+        )
+    )
+    header_items.append(
+        TextBlock(
+            text="Insure • Secure • Assure • IT Self-Service",
+            size="Small",
+            isSubtle=True,
+            spacing="None",
+        )
+    )
+
     return Container(
         style="emphasis",
         bleed=True,
-        items=[
-            TextBlock(
-                text=CARD_HEADER_TITLE,
-                weight="Bolder",
-                size="Medium",
-                color="Accent",
-            ),
-            TextBlock(
-                text=CARD_HEADER_SUBTITLE,
-                size="Small",
-                isSubtle=True,
-            ),
-        ],
+        show_border=True,
+        rounded_corners=True,
+        items=header_items,
     )
 
 
+
 def create_menu_card() -> AdaptiveCard:
-    """Card for the initial First Assurance bot menu."""
+    """Card for the initial First Assurance bot menu with warm orange action styling."""
     return AdaptiveCard(
         body=[
             create_brand_header(),
             Container(
+                show_border=True,
+                rounded_corners=True,
+                style="emphasis",
                 items=[
                     TextBlock(
                         text="Hello! How would you like me to help you today?",
                         size="Medium",
-                    )
-                ]
+                        weight="Bolder",
+                    ),
+                    TextBlock(
+                        text="Select an option below to begin IT account self-service.",
+                        isSubtle=True,
+                        spacing="Small",
+                    ),
+                    Container(
+                        style="warning",
+                        show_border=True,
+                        rounded_corners=True,
+                        spacing="Medium",
+                        select_action=SubmitAction(
+                            title="1. Unlock Account",
+                            data={"action": "unlock_account"},
+                        ),
+                        items=[
+                            TextBlock(
+                                text="🔓  1. Unlock Account",
+                                weight="Bolder",
+                                size="Medium",
+                                horizontal_alignment="Center",
+                            ),
+                        ],
+                    ),
+                ],
             ),
         ],
         actions=[
             SubmitAction(
-                title="🔓 Unlock Account",
+                title="🔓 1. Unlock Account",
                 data={"action": "unlock_account"},
-                style="positive",
             )
         ],
     )
+
 
 
 def create_verification_card(
@@ -69,6 +116,9 @@ def create_verification_card(
         body=[
             create_brand_header(),
             Container(
+                show_border=True,
+                rounded_corners=True,
+                style="emphasis",
                 items=[
                     TextBlock(
                         text="Identity Verified ✅",
@@ -88,6 +138,24 @@ def create_verification_card(
                         weight="Bolder",
                         spacing="Medium",
                     ),
+                    Container(
+                        style="warning",
+                        show_border=True,
+                        rounded_corners=True,
+                        spacing="Medium",
+                        select_action=SubmitAction(
+                            title="Yes, Unlock Account",
+                            data={"action": "confirm_unlock"},
+                        ),
+                        items=[
+                            TextBlock(
+                                text="🔓  Yes, Unlock Account",
+                                weight="Bolder",
+                                size="Medium",
+                                horizontal_alignment="Center",
+                            ),
+                        ],
+                    ),
                 ]
             ),
         ],
@@ -95,7 +163,6 @@ def create_verification_card(
             SubmitAction(
                 title="🔓 Yes, Unlock Account",
                 data={"action": "confirm_unlock"},
-                style="positive",
             ),
             SubmitAction(
                 title="❌ Cancel",
@@ -106,12 +173,16 @@ def create_verification_card(
     )
 
 
+
 def create_success_card(name: str, department: str) -> AdaptiveCard:
     """Card confirming successful account unlock with First Assurance branding."""
     return AdaptiveCard(
         body=[
             create_brand_header(),
             Container(
+                show_border=True,
+                rounded_corners=True,
+                style="emphasis",
                 items=[
                     TextBlock(
                         text="Account Unlocked 🎉",
@@ -148,6 +219,9 @@ def create_already_unlocked_card(name: str, department: str) -> AdaptiveCard:
         body=[
             create_brand_header(),
             Container(
+                show_border=True,
+                rounded_corners=True,
+                style="emphasis",
                 items=[
                     TextBlock(
                         text="Account Status ℹ️",
@@ -168,6 +242,7 @@ def create_already_unlocked_card(name: str, department: str) -> AdaptiveCard:
                 ]
             ),
         ],
+
         actions=[
             SubmitAction(
                 title="🔄 Start New Request",
@@ -278,7 +353,7 @@ def create_2fa_card(
             text="Two-Factor Authentication (2FA) 📱",
             weight="Bolder",
             size="Large",
-            color="Accent",
+            color="Warning",
         ),
         FactSet(
             facts=[
@@ -325,13 +400,17 @@ def create_2fa_card(
     return AdaptiveCard(
         body=[
             create_brand_header(),
-            Container(items=items),
+            Container(
+                show_border=True,
+                rounded_corners=True,
+                style="emphasis",
+                items=items,
+            ),
         ],
         actions=[
             SubmitAction(
                 title="🔑 Verify & Unlock",
                 data={"action": "submit_2fa"},
-                style="positive",
             ),
             SubmitAction(
                 title="📱 Authenticator Setup / QR",
@@ -357,12 +436,15 @@ def create_totp_setup_card(
         body=[
             create_brand_header(),
             Container(
+                show_border=True,
+                rounded_corners=True,
+                style="emphasis",
                 items=[
                     TextBlock(
                         text="📱 Setup Microsoft Authenticator",
                         weight="Bolder",
                         size="Large",
-                        color="Accent",
+                        color="Warning",
                     ),
                     TextBlock(
                         text=f"Pair your mobile **Microsoft Authenticator** app for **{name}** (`{account_id}`):",
@@ -391,7 +473,6 @@ def create_totp_setup_card(
             SubmitAction(
                 title="🔑 Enter 2FA Code",
                 data={"action": "confirm_unlock"},
-                style="positive",
             ),
             SubmitAction(
                 title="🔄 Main Menu",
@@ -416,6 +497,9 @@ def create_2fa_toggle_card(enabled: bool, admin_name: str) -> AdaptiveCard:
         body=[
             create_brand_header(),
             Container(
+                show_border=True,
+                rounded_corners=True,
+                style="emphasis",
                 items=[
                     TextBlock(
                         text=f"2FA Setting: {status_text}",
@@ -441,7 +525,7 @@ def create_2fa_toggle_card(enabled: bool, admin_name: str) -> AdaptiveCard:
             SubmitAction(
                 title="Turn 2FA OFF 🔓" if enabled else "Turn 2FA ON 🔐",
                 data={"action": "toggle_2fa_off" if enabled else "toggle_2fa_on"},
-                style="destructive" if enabled else "positive",
+                style="destructive" if enabled else "default",
             ),
             SubmitAction(
                 title="🔄 Return to Menu",
@@ -449,3 +533,4 @@ def create_2fa_toggle_card(enabled: bool, admin_name: str) -> AdaptiveCard:
             ),
         ],
     )
+

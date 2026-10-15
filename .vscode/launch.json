@@ -1,0 +1,30 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Teams Bot (with Dev Tunnel)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/bot/teams_app.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "1. Start Dev Tunnel",
+      "justMyCode": true
+    },
+    {
+      "name": "Debug Backend API (Port 8000)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": [
+        "backend.main:app",
+        "--reload",
+        "--port",
+        "8000"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    }
+  ]
+}
