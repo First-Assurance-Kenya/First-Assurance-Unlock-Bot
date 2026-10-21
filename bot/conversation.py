@@ -123,18 +123,41 @@ class AccountUnlockBot:
     rate limiting, and SQL database audit logging.
     """
 
-    def __init__(self, requester_name: str = "Unknown", requester_id: str = "N/A"):
+    def __init__(
+        self,
+        requester_name: str = "Unknown",
+        requester_id: str = "N/A",
+        requester_email: Optional[str] = None,
+        requester_upn: Optional[str] = None,
+        requester_aad_id: Optional[str] = None,
+    ):
         self.state = ConversationState.WAITING_FOR_TRIGGER
         self.user_data: Optional[Dict[str, Any]] = None
         self.requester_name = requester_name
         self.requester_id = requester_id
+        self.requester_email = requester_email
+        self.requester_upn = requester_upn
+        self.requester_aad_id = requester_aad_id
 
-    def set_requester(self, name: str, user_id: str = "N/A") -> None:
+    def set_requester(
+        self,
+        name: str,
+        user_id: str = "N/A",
+        email: Optional[str] = None,
+        upn: Optional[str] = None,
+        aad_id: Optional[str] = None,
+    ) -> None:
         """Update authenticated Entra ID / Teams identity for this session."""
         if name and name != "Unknown":
             self.requester_name = name
         if user_id and user_id != "N/A":
             self.requester_id = user_id
+        if email:
+            self.requester_email = email
+        if upn:
+            self.requester_upn = upn
+        if aad_id:
+            self.requester_aad_id = aad_id
 
     def is_admin(self) -> bool:
         """Check if the session requester is a recognized IT administrator."""
@@ -188,7 +211,10 @@ class AccountUnlockBot:
 
         self.reset()
         self.state = ConversationState.WAITING_FOR_MENU
-        return MENU_MESSAGE, create_menu_card()
+        return MENU_MESSAGE, create_menu_card(
+            requester_name=self.requester_name,
+            requester_email=self.requester_email or self.requester_upn,
+        )
 
     def reset(self):
         self.state = ConversationState.WAITING_FOR_TRIGGER
@@ -212,7 +238,10 @@ class AccountUnlockBot:
         # Handle Adaptive Card button actions
         if isinstance(data, dict):
             action = data.get("action")
-            if action == "unlock_account":
+            if action == "unlock_self":
+                return self.handle_self_unlock()
+
+            if action in ("unlock_account", "unlock_colleague"):
                 self.state = ConversationState.WAITING_FOR_NAME
                 return ENTER_FULL_NAME_MESSAGE, None
 
@@ -465,8 +494,89 @@ class AccountUnlockBot:
             )
             return text_reply, card
 
+    def handle_self_unlock(self) -> Tuple[str, Optional[Any]]:
+        """Automatically identify and verify the requesting Entra ID user in Active Directory."""
+        from backend.services.entra_service import EntraService
+
+        # 1. Match by UPN username prefix (e.g. nkibe@firstassurance.co.ke -> nkibe)
+        candidate = EntraService.map_entra_user_to_ad_username(
+            upn=self.requester_upn,
+            email=self.requester_email,
+            display_name=self.requester_name,
+        )
+        user = None
+        if candidate:
+            user = find_user(candidate)
+
+        # 2. Match by full display name
+        if not user and self.requester_name and self.requester_name.lower() != "unknown":
+            user = find_user_by_name(self.requester_name) or find_user(self.requester_name)
+
+        # 3. Fallback to manual entry if Entra identity is not linked
+        if not user:
+            self.state = ConversationState.WAITING_FOR_NAME
+            return "Could not automatically match your Entra ID login to an Active Directory account.\n\nPlease enter your employee ID or full name:", None
+
+        # Check rate limit
+        is_limited, attempts = check_rate_limit(user["employee_id"], max_attempts=3, window_minutes=1440)
+        req_lower = self.requester_name.strip().lower()
+        if is_limited and not any(admin in req_lower for admin in ADMIN_USERS):
+            self.state = ConversationState.LOCKED_OUT
+            return RATE_LIMIT_EXCEEDED_MESSAGE, create_it_referral_card(user["name"], attempts)
+
+        self.user_data = user
+
+        log_audit_event(
+            action="ENTRA_SELF_VERIFIED",
+            requester_name=self.requester_name,
+            requester_id=self.requester_id,
+            target_account_id=user["employee_id"],
+            target_account_name=user["name"],
+            target_department=user["department"],
+            status="SUCCESS",
+            details=f"Entra ID 1-click lookup for '{user['name']}' (UPN: {self.requester_upn or 'N/A'}).",
+        )
+
+        current = find_user(user["employee_id"])
+        if current and current.get("locked"):
+            self.state = ConversationState.WAITING_FOR_CONFIRMATION
+            card = create_verification_card(
+                user["name"],
+                user["department"],
+                status="Locked 🔒",
+                is_entra_verified=True,
+            )
+            text_reply = f"Hello {user['name']}! We verified your identity via Microsoft Entra ID.\n\nYour account is currently **Locked 🔒**. Click below to unlock immediately:"
+            return text_reply, card
+        else:
+            self.state = ConversationState.COMPLETED
+            card = create_already_unlocked_card(
+                user["name"],
+                user["department"],
+            )
+            text_reply = f"Hello {user['name']}! Your account is currently **Active & Unlocked 🟢**. No action is needed."
+            return text_reply, card
+
     def prompt_or_execute_unlock(self) -> Tuple[str, Any]:
-        """Proceed to 2FA verification if enabled, or unlock directly if 2FA is disabled."""
+        """
+        Proceed to unlock.
+        If Entra ID already verified this employee for their own account,
+        2FA is safely bypassed (Zero-Trust Entra Verified).
+        If unlocking on behalf of a colleague and 2FA is enabled, prompt for 2FA.
+        """
+        from backend.services.entra_service import EntraService
+
+        is_self = EntraService.is_self_request(
+            requester_name=self.requester_name,
+            requester_email=self.requester_email,
+            requester_upn=self.requester_upn,
+            target_account=self.user_data,
+        )
+
+        if is_self:
+            logger.info("Entra ID verified self-unlock for '%s'. Bypassing manual 2FA.", self.user_data.get("name"))
+            return self.execute_unlock()
+
         if not is_2fa_enabled():
             return self.execute_unlock()
 

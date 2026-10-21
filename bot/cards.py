@@ -55,8 +55,106 @@ def create_brand_header() -> Container:
 
 
 
-def create_menu_card() -> AdaptiveCard:
-    """Card for the initial First Assurance bot menu with warm orange action styling."""
+def create_menu_card(
+    requester_name: Optional[str] = None,
+    requester_email: Optional[str] = None,
+) -> AdaptiveCard:
+    """Card for the initial First Assurance bot menu with Entra ID user recognition."""
+    menu_items = []
+
+    if requester_name and requester_name.strip() and requester_name.lower() != "unknown":
+        menu_items.append(
+            TextBlock(
+                text=f"Welcome, {requester_name}! 👋",
+                size="Large",
+                weight="Bolder",
+            )
+        )
+        badge_text = "🛡️ Verified Microsoft Entra ID Session"
+        if requester_email:
+            badge_text += f" • {requester_email}"
+        menu_items.append(
+            TextBlock(
+                text=badge_text,
+                size="Small",
+                isSubtle=True,
+                spacing="None",
+            )
+        )
+        menu_items.append(
+            TextBlock(
+                text="Choose an option below to proceed:",
+                spacing="Small",
+            )
+        )
+        menu_items.append(
+            Container(
+                style="warning",
+                show_border=True,
+                rounded_corners=True,
+                spacing="Medium",
+                select_action=SubmitAction(
+                    title="1. Unlock My Account",
+                    data={"action": "unlock_self"},
+                ),
+                items=[
+                    TextBlock(
+                        text="🔓  1. Unlock My Account (1-Click)",
+                        weight="Bolder",
+                        size="Medium",
+                        horizontal_alignment="Center",
+                    ),
+                ],
+            )
+        )
+        card_actions = [
+            SubmitAction(
+                title="🔓 1. Unlock My Account",
+                data={"action": "unlock_self"},
+            ),
+            SubmitAction(
+                title="👥 Unlock for a Colleague",
+                data={"action": "unlock_account"},
+            ),
+        ]
+    else:
+        menu_items.extend([
+            TextBlock(
+                text="Hello! How would you like me to help you today?",
+                size="Medium",
+                weight="Bolder",
+            ),
+            TextBlock(
+                text="Select an option below to begin IT account self-service.",
+                isSubtle=True,
+                spacing="Small",
+            ),
+            Container(
+                style="warning",
+                show_border=True,
+                rounded_corners=True,
+                spacing="Medium",
+                select_action=SubmitAction(
+                    title="1. Unlock Account",
+                    data={"action": "unlock_account"},
+                ),
+                items=[
+                    TextBlock(
+                        text="🔓  1. Unlock Account",
+                        weight="Bolder",
+                        size="Medium",
+                        horizontal_alignment="Center",
+                    ),
+                ],
+            ),
+        ])
+        card_actions = [
+            SubmitAction(
+                title="🔓 1. Unlock Account",
+                data={"action": "unlock_account"},
+            )
+        ]
+
     return AdaptiveCard(
         body=[
             create_brand_header(),
@@ -64,44 +162,10 @@ def create_menu_card() -> AdaptiveCard:
                 show_border=True,
                 rounded_corners=True,
                 style="emphasis",
-                items=[
-                    TextBlock(
-                        text="Hello! How would you like me to help you today?",
-                        size="Medium",
-                        weight="Bolder",
-                    ),
-                    TextBlock(
-                        text="Select an option below to begin IT account self-service.",
-                        isSubtle=True,
-                        spacing="Small",
-                    ),
-                    Container(
-                        style="warning",
-                        show_border=True,
-                        rounded_corners=True,
-                        spacing="Medium",
-                        select_action=SubmitAction(
-                            title="1. Unlock Account",
-                            data={"action": "unlock_account"},
-                        ),
-                        items=[
-                            TextBlock(
-                                text="🔓  1. Unlock Account",
-                                weight="Bolder",
-                                size="Medium",
-                                horizontal_alignment="Center",
-                            ),
-                        ],
-                    ),
-                ],
+                items=menu_items,
             ),
         ],
-        actions=[
-            SubmitAction(
-                title="🔓 1. Unlock Account",
-                data={"action": "unlock_account"},
-            )
-        ],
+        actions=card_actions,
     )
 
 
@@ -109,9 +173,64 @@ def create_menu_card() -> AdaptiveCard:
 def create_verification_card(
     name: str,
     department: str,
-    status: str = "Locked 🔒"
+    status: str = "Locked 🔒",
+    is_entra_verified: bool = False,
 ) -> AdaptiveCard:
     """Card showing employee name verification, department, and unlock prompt."""
+    facts = [
+        Fact(title="Full Name", value=name),
+        Fact(title="Department", value=department),
+        Fact(title="Account Status", value=status),
+    ]
+    if is_entra_verified:
+        facts.append(Fact(title="Authentication", value="Microsoft Entra ID (MFA Verified) 🛡️"))
+
+    card_items = [
+        TextBlock(
+            text="Identity Verified ✅",
+            weight="Bolder",
+            size="Large",
+            color="Good",
+        ),
+        FactSet(facts=facts),
+    ]
+
+    if is_entra_verified:
+        card_items.append(
+            TextBlock(
+                text="✅ Identity verified via Microsoft Entra ID. No additional 2FA code is needed.",
+                color="Good",
+                size="Small",
+                spacing="Small",
+            )
+        )
+
+    card_items.extend([
+        TextBlock(
+            text="Would you like me to unlock your account?",
+            weight="Bolder",
+            spacing="Medium",
+        ),
+        Container(
+            style="warning",
+            show_border=True,
+            rounded_corners=True,
+            spacing="Medium",
+            select_action=SubmitAction(
+                title="Yes, Unlock Account",
+                data={"action": "confirm_unlock"},
+            ),
+            items=[
+                TextBlock(
+                    text="🔓  Yes, Unlock Account",
+                    weight="Bolder",
+                    size="Medium",
+                    horizontal_alignment="Center",
+                ),
+            ],
+        ),
+    ])
+
     return AdaptiveCard(
         body=[
             create_brand_header(),
@@ -119,44 +238,7 @@ def create_verification_card(
                 show_border=True,
                 rounded_corners=True,
                 style="emphasis",
-                items=[
-                    TextBlock(
-                        text="Identity Verified ✅",
-                        weight="Bolder",
-                        size="Large",
-                        color="Good",
-                    ),
-                    FactSet(
-                        facts=[
-                            Fact(title="Full Name", value=name),
-                            Fact(title="Department", value=department),
-                            Fact(title="Account Status", value=status),
-                        ]
-                    ),
-                    TextBlock(
-                        text="Would you like me to unlock your account?",
-                        weight="Bolder",
-                        spacing="Medium",
-                    ),
-                    Container(
-                        style="warning",
-                        show_border=True,
-                        rounded_corners=True,
-                        spacing="Medium",
-                        select_action=SubmitAction(
-                            title="Yes, Unlock Account",
-                            data={"action": "confirm_unlock"},
-                        ),
-                        items=[
-                            TextBlock(
-                                text="🔓  Yes, Unlock Account",
-                                weight="Bolder",
-                                size="Medium",
-                                horizontal_alignment="Center",
-                            ),
-                        ],
-                    ),
-                ]
+                items=card_items,
             ),
         ],
         actions=[

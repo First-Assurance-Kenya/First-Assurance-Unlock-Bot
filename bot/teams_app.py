@@ -82,13 +82,19 @@ async def handle_message(ctx: ActivityContext[MessageActivity]) -> None:
     conversation_id = ctx.activity.conversation.id
     activity_text = ctx.activity.text
     activity_value = ctx.activity.value
-    sender_name = ctx.activity.from_.name if ctx.activity.from_ else "Unknown"
-    sender_id = ctx.activity.from_.id if ctx.activity.from_ else "Unknown"
+    sender = ctx.activity.from_
+    sender_name = sender.name if sender else "Unknown"
+    sender_id = sender.id if sender else "Unknown"
+    sender_email = getattr(sender, "email", None) if sender else None
+    sender_upn = getattr(sender, "user_principal_name", None) if sender else None
+    sender_aad_id = getattr(sender, "aad_object_id", None) if sender else None
 
     logger.info(
-        "AUDIT: Message received from user='%s' (ID: %s) in conv='%s'",
+        "AUDIT: Message received from user='%s' (UPN: %s, ID: %s, AAD: %s) in conv='%s'",
         sender_name,
+        sender_upn or sender_email or "N/A",
         sender_id,
+        sender_aad_id or "N/A",
         conversation_id,
     )
 
@@ -104,6 +110,9 @@ async def handle_message(ctx: ActivityContext[MessageActivity]) -> None:
         value=activity_value,
         requester_name=sender_name,
         requester_id=sender_id,
+        requester_email=sender_email,
+        requester_upn=sender_upn,
+        requester_aad_id=sender_aad_id,
     )
 
     if card is not None:
