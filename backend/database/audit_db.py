@@ -298,6 +298,26 @@ def reset_rate_limit(requester_name: str, environment: Optional[str] = None) -> 
         pass
 
 
+def clear_audit_logs(environment: Optional[str] = None) -> None:
+    """Clear all audit logs (useful for test suites)."""
+    env = environment or get_current_environment()
+    schema = get_target_schema(env)
+    if is_postgres_configured():
+        pg_conn = get_postgres_connection()
+        if pg_conn:
+            try:
+                with pg_conn.cursor() as cur:
+                    cur.execute(f"TRUNCATE TABLE {schema}.account_unlock_audit RESTART IDENTITY")
+                return
+            except Exception:
+                pass
+    target_db = get_db_path(env)
+    if target_db.exists():
+        with get_sqlite_connection(target_db) as conn:
+            conn.execute("DELETE FROM audit_logs")
+            conn.commit()
+
+
 def get_audit_logs(limit: int = 50, environment: Optional[str] = None) -> List[Dict[str, Any]]:
     env = environment or get_current_environment()
     schema = get_target_schema(env)

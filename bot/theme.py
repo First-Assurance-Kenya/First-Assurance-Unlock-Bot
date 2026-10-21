@@ -29,7 +29,9 @@ CARD_HEADER_SUBTITLE = f"{COMPANY_TAGLINE} • {COMPANY_PORTAL_TITLE}"
 
 # Logo and Visual Asset Delivery
 DEV_TUNNEL_URL = os.getenv("DEV_TUNNEL_URL", "https://vrt0glbb-3978.uks1.devtunnels.ms").rstrip("/")
+GITHUB_RAW_LOGO = "https://raw.githubusercontent.com/First-Assurance-Kenya/First-Assurance-Unlock-Bot/main/assets/first_assurance_logo.png"
+
 LOGO_PUBLIC_URL = os.getenv(
     "LOGO_PUBLIC_URL",
-    f"{DEV_TUNNEL_URL}/static/first_assurance_logo.png",
+    GITHUB_RAW_LOGO,
 )

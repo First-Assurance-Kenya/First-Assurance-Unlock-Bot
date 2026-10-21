@@ -23,7 +23,8 @@ def create_brand_header() -> Container:
             Image(
                 url=LOGO_PUBLIC_URL,
                 alt_text="First Assurance - Insure • Secure • Assure",
-                size="Stretch",
+                size="Auto",
+                width="100%",
                 horizontal_alignment="Center",
             )
         )
@@ -47,7 +48,7 @@ def create_brand_header() -> Container:
 
     return Container(
         style="emphasis",
-        bleed=True,
+        bleed=False,
         show_border=True,
         rounded_corners=True,
         items=header_items,
@@ -114,7 +115,7 @@ def create_menu_card(
             ),
             SubmitAction(
                 title="👥 Unlock for a Colleague",
-                data={"action": "unlock_account"},
+                data={"action": "unlock_colleague"},
             ),
         ]
     else:
@@ -152,7 +153,11 @@ def create_menu_card(
             SubmitAction(
                 title="🔓 1. Unlock Account",
                 data={"action": "unlock_account"},
-            )
+            ),
+            SubmitAction(
+                title="👥 Unlock for a Colleague",
+                data={"action": "unlock_colleague"},
+            ),
         ]
 
     return AdaptiveCard(
@@ -175,19 +180,23 @@ def create_verification_card(
     department: str,
     status: str = "Locked 🔒",
     is_entra_verified: bool = False,
+    is_colleague_assist: bool = False,
+    sponsor_name: Optional[str] = None,
 ) -> AdaptiveCard:
     """Card showing employee name verification, department, and unlock prompt."""
     facts = [
-        Fact(title="Full Name", value=name),
+        Fact(title="Full Name" if not is_colleague_assist else "Colleague Name", value=name),
         Fact(title="Department", value=department),
         Fact(title="Account Status", value=status),
     ]
-    if is_entra_verified:
+    if is_colleague_assist and sponsor_name:
+        facts.append(Fact(title="Assisted By (Sponsor)", value=f"{sponsor_name} (Entra Verified) 🛡️"))
+    elif is_entra_verified:
         facts.append(Fact(title="Authentication", value="Microsoft Entra ID (MFA Verified) 🛡️"))
 
     card_items = [
         TextBlock(
-            text="Identity Verified ✅",
+            text="Identity Verified ✅" if not is_colleague_assist else "Colleague Identity Verified ✅",
             weight="Bolder",
             size="Large",
             color="Good",
@@ -195,7 +204,16 @@ def create_verification_card(
         FactSet(facts=facts),
     ]
 
-    if is_entra_verified:
+    if is_colleague_assist and sponsor_name:
+        card_items.append(
+            TextBlock(
+                text=f"📝 Audit Record: Unlock sponsored by {sponsor_name}. Both user identities are logged in the audit database.",
+                color="Warning",
+                size="Small",
+                spacing="Small",
+            )
+        )
+    elif is_entra_verified:
         card_items.append(
             TextBlock(
                 text="✅ Identity verified via Microsoft Entra ID. No additional 2FA code is needed.",
@@ -205,9 +223,12 @@ def create_verification_card(
             )
         )
 
+    prompt_msg = f"Would you like to unlock {name}'s account on their behalf?" if is_colleague_assist else "Would you like me to unlock your account?"
+    button_label = f"🔓  Yes, Unlock {name}'s Account" if is_colleague_assist else "🔓  Yes, Unlock Account"
+
     card_items.extend([
         TextBlock(
-            text="Would you like me to unlock your account?",
+            text=prompt_msg,
             weight="Bolder",
             spacing="Medium",
         ),
@@ -222,7 +243,7 @@ def create_verification_card(
             ),
             items=[
                 TextBlock(
-                    text="🔓  Yes, Unlock Account",
+                    text=button_label,
                     weight="Bolder",
                     size="Medium",
                     horizontal_alignment="Center",
@@ -243,7 +264,7 @@ def create_verification_card(
         ],
         actions=[
             SubmitAction(
-                title="🔓 Yes, Unlock Account",
+                title=f"🔓 Yes, Unlock {name}'s Account" if is_colleague_assist else "🔓 Yes, Unlock Account",
                 data={"action": "confirm_unlock"},
             ),
             SubmitAction(

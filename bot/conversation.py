@@ -29,7 +29,9 @@ from bot.cards import (
 from bot.responses import (
     ACCOUNT_UNLOCKED_MESSAGE,
     CANCEL_MESSAGE,
+    COLLEAGUE_VERIFY_FAILED_MESSAGE,
     ENTER_2FA_CODE_MESSAGE,
+    ENTER_COLLEAGUE_NAME_MESSAGE,
     ENTER_FULL_NAME_MESSAGE,
     INVALID_CONFIRMATION_MESSAGE,
     INVALID_MENU_MESSAGE,
@@ -138,6 +140,7 @@ class AccountUnlockBot:
         self.requester_email = requester_email
         self.requester_upn = requester_upn
         self.requester_aad_id = requester_aad_id
+        self.is_assisting_colleague: bool = False
 
     def set_requester(
         self,
@@ -219,6 +222,7 @@ class AccountUnlockBot:
     def reset(self):
         self.state = ConversationState.WAITING_FOR_TRIGGER
         self.user_data = None
+        self.is_assisting_colleague = False
 
     def process_message(self, message: str) -> str:
         text, _ = self.process_input(text=message)
@@ -239,10 +243,17 @@ class AccountUnlockBot:
         if isinstance(data, dict):
             action = data.get("action")
             if action == "unlock_self":
+                self.is_assisting_colleague = False
                 return self.handle_self_unlock()
 
-            if action in ("unlock_account", "unlock_colleague"):
+            if action == "unlock_colleague":
                 self.state = ConversationState.WAITING_FOR_NAME
+                self.is_assisting_colleague = True
+                return ENTER_COLLEAGUE_NAME_MESSAGE, None
+
+            if action == "unlock_account":
+                self.state = ConversationState.WAITING_FOR_NAME
+                self.is_assisting_colleague = False
                 return ENTER_FULL_NAME_MESSAGE, None
 
             if action == "confirm_unlock" and self.user_data:
@@ -399,10 +410,16 @@ class AccountUnlockBot:
             return TRIGGER_PROMPT, None
 
         if self.state == ConversationState.WAITING_FOR_MENU:
-            if text_lower in MENU_UNLOCK_OPTIONS:
+            if text_lower in ("2", "unlock colleague", "colleague", "for a colleague", "assist colleague", "unlock for a colleague"):
                 self.state = ConversationState.WAITING_FOR_NAME
-                return ENTER_FULL_NAME_MESSAGE, None
-            return INVALID_MENU_MESSAGE, create_menu_card()
+                self.is_assisting_colleague = True
+                return ENTER_COLLEAGUE_NAME_MESSAGE, None
+            if text_lower in MENU_UNLOCK_OPTIONS:
+                return self.handle_self_unlock()
+            return INVALID_MENU_MESSAGE, create_menu_card(
+                requester_name=self.requester_name,
+                requester_email=self.requester_email or self.requester_upn,
+            )
 
         if self.state == ConversationState.WAITING_FOR_NAME:
             return self.handle_name_verification(raw_text)
@@ -434,7 +451,7 @@ class AccountUnlockBot:
                 requester_id=self.requester_id,
                 target_account_name=name_raw,
                 status="FAILURE",
-                details=f"Account query failed for '{name_raw}'.",
+                details=f"Account query failed for '{name_raw}'." if not self.is_assisting_colleague else f"Colleague query failed for '{name_raw}'.",
             )
             is_limited, attempts = self.check_requester_rate_limit()
             if is_limited:
@@ -442,8 +459,9 @@ class AccountUnlockBot:
                 return RATE_LIMIT_EXCEEDED_MESSAGE, create_it_referral_card(self.requester_name, attempts)
 
             remaining = max(0, 3 - attempts)
+            fail_msg = COLLEAGUE_VERIFY_FAILED_MESSAGE if self.is_assisting_colleague else VERIFY_FAILED_MESSAGE
             return (
-                f"{VERIFY_FAILED_MESSAGE}\n\n*(Daily unlock requests remaining: {remaining}/3)*",
+                f"{fail_msg}\n\n*(Daily unlock requests remaining: {remaining}/3)*",
                 None,
             )
 
@@ -475,12 +493,23 @@ class AccountUnlockBot:
             card = create_verification_card(
                 user["name"],
                 user["department"],
-                status="Locked 🔒"
+                status="Locked 🔒",
+                is_colleague_assist=self.is_assisting_colleague,
+                sponsor_name=self.requester_name if self.is_assisting_colleague else None,
             )
-            text_reply = VERIFY_SUCCESS_LOCKED_TEMPLATE.format(
-                name=user["name"],
-                department=user["department"]
-            )
+            if self.is_assisting_colleague:
+                text_reply = (
+                    f"Colleague Identity Verified ✅\n"
+                    f"Colleague: {user['name']}\n"
+                    f"Department: {user['department']}\n"
+                    f"Status: Locked 🔒\n\n"
+                    f"Would you like to unlock this account on their behalf?"
+                )
+            else:
+                text_reply = VERIFY_SUCCESS_LOCKED_TEMPLATE.format(
+                    name=user["name"],
+                    department=user["department"]
+                )
             return text_reply, card
         else:
             self.state = ConversationState.COMPLETED
@@ -488,10 +517,13 @@ class AccountUnlockBot:
                 user["name"],
                 user["department"]
             )
-            text_reply = VERIFY_SUCCESS_ALREADY_UNLOCKED_TEMPLATE.format(
-                name=user["name"],
-                department=user["department"]
-            )
+            if self.is_assisting_colleague:
+                text_reply = f"Identity verified for colleague {user['name']}.\n\nTheir account is currently Already Unlocked 🟢. No changes were made."
+            else:
+                text_reply = VERIFY_SUCCESS_ALREADY_UNLOCKED_TEMPLATE.format(
+                    name=user["name"],
+                    department=user["department"]
+                )
             return text_reply, card
 
     def handle_self_unlock(self) -> Tuple[str, Optional[Any]]:

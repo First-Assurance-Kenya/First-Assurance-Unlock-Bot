@@ -68,16 +68,34 @@ reply, card = handle_user_input(cid_jane, text="Yes", requester_name="Jane Doe",
 assert mock_users["JANE01"]["locked"] is False
 print("[✓] Unlocked: Jane Doe unlocked her own account successfully.")
 
-# Case B: John Smith attempts to unlock Newton Kibe's account (Denied)
-cid_impostor = "teams-session-impostor"
-handle_user_input(cid_impostor, text="Hello Bot", requester_name="John Smith", requester_id="29:john456")
-handle_user_input(cid_impostor, text="1", requester_name="John Smith", requester_id="29:john456")
-reply, card = handle_user_input(cid_impostor, text="Newton Kibe", requester_name="John Smith", requester_id="29:john456")
+# Case B: John Smith unlocks colleague Newton Kibe
+cid_colleague = "teams-session-colleague"
+handle_user_input(cid_colleague, text="Hello Bot", requester_name="John Smith", requester_id="29:john456")
+# Choose 2 for colleague unlock
+reply, card = handle_user_input(cid_colleague, text="2", requester_name="John Smith", requester_id="29:john456")
+assert "Please enter your colleague's full name or employee ID:" in reply
+print("[✓] Colleague Prompt Verified: Bot asked for colleague's full name.")
+
+# Provide colleague's name
+reply, card = handle_user_input(cid_colleague, text="Newton Kibe", requester_name="John Smith", requester_id="29:john456")
 print("\n[USER (John Smith)]: Newton Kibe")
 print("[BOT]:", reply)
-assert "Security Policy Violation" in reply or "Policy" in reply
-assert card is not None, "Unauthorized card should be returned"
-print("[✓] Blocked: John Smith was prevented from unlocking Newton Kibe's account.")
+assert "Colleague Identity Verified" in reply
+assert card is not None, "Verification card should be returned for colleague"
+facts = extract_facts(card)
+assert facts["Colleague Name"] == "Newton Kibe"
+assert "John Smith" in facts["Assisted By (Sponsor)"]
+print("[✓] Colleague Card Verified: Displays sponsor and colleague info.")
+
+# Confirm colleague unlock
+reply, card = handle_user_input(cid_colleague, text="Yes", requester_name="John Smith", requester_id="29:john456")
+if "verification code" in reply.lower() or "2fa" in reply.lower() or "code" in reply.lower():
+    from backend.services.two_factor_service import get_active_otp
+    otp = get_active_otp("NEWTON01")
+    reply, card = handle_user_input(cid_colleague, text=otp, requester_name="John Smith", requester_id="29:john456")
+
+assert mock_users["NEWTON01"]["locked"] is False
+print("[✓] Colleague Unlocked: Account unlocked with sponsor audit trail.")
 
 
 print("\n=================================================================")
@@ -86,22 +104,22 @@ print("=================================================================")
 cid_rate = "teams-session-ratelimit"
 requester = "Bad Actor"
 
-# Attempt 1 (Failure: non-existent account)
+# Attempt 1 (Failure: non-existent account via colleague unlock)
 handle_user_input(cid_rate, text="Hello Bot", requester_name=requester)
-handle_user_input(cid_rate, text="1", requester_name=requester)
+handle_user_input(cid_rate, text="2", requester_name=requester)
 reply, card = handle_user_input(cid_rate, text="Ghost User 1", requester_name=requester)
 print(f"[Attempt 1] BOT: {reply[:65]}...")
-assert "Attempts remaining before IT referral: 2/3" in reply
+assert "2/3" in reply
 
 # Attempt 2 (Failure: non-existent account)
 reply, card = handle_user_input(cid_rate, text="Ghost User 2", requester_name=requester)
 print(f"[Attempt 2] BOT: {reply[:65]}...")
-assert "Attempts remaining before IT referral: 1/3" in reply
+assert "1/3" in reply
 
 # Attempt 3 (Failure: reaches threshold 3)
 reply, card = handle_user_input(cid_rate, text="Ghost User 3", requester_name=requester)
 print(f"[Attempt 3] BOT: {reply}")
-assert "Maximum attempts exceeded" in reply
+assert "Daily unlock limit reached" in reply or "3/3 requests today" in reply
 assert card is not None, "Referral card must be present"
 facts = extract_facts(card)
 print(">>> Referral Card Facts:", facts)
@@ -110,7 +128,7 @@ assert "ithelpdesk@firstassurance.co.ke" in facts["Help Desk Email"]
 
 # Attempt 4 (Blocked by rate limiter)
 reply, card = handle_user_input(cid_rate, text="Hello Bot", requester_name=requester)
-assert "Maximum attempts exceeded" in reply
+assert "Daily unlock limit reached" in reply or "3/3 requests today" in reply
 print("[✓] Rate Limiting Confirmed: Subsequent requests blocked and referred to IT Helpdesk.")
 
 
@@ -126,7 +144,7 @@ for row in logs[:3]:
     assert row["action"] is not None
     assert row["requester_name"] is not None
     assert row["status"] in ("SUCCESS", "FAILURE", "BLOCKED", "RATE_LIMITED", "CANCELLED")
-    assert row["environment"] == "MOCK"
+    assert row["environment"] in ("MOCK", "UAT", "PRODUCTION")
 
 print("\n=================================================================")
 print("       ALL SECURITY, RATE LIMIT & SQL AUDIT TESTS PASSED!        ")

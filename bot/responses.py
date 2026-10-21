@@ -5,6 +5,7 @@ MENU_MESSAGE = """Hello! How would you like me to help you today?
 1. 🔓 Unlock Account"""
 
 ENTER_FULL_NAME_MESSAGE = "Please enter your full name."
+ENTER_COLLEAGUE_NAME_MESSAGE = "Please enter your colleague's full name or employee ID:"
 
 VERIFY_SUCCESS_LOCKED_TEMPLATE = """Identity verified.
 Name: {name}
@@ -23,6 +24,10 @@ Your account is not currently locked. No changes were made."""
 VERIFY_FAILED_MESSAGE = """I couldn't find an account matching that full name.
 
 Please check your spelling and enter your full name again (or type 'reset' to restart)."""
+
+COLLEAGUE_VERIFY_FAILED_MESSAGE = """I couldn't find an account matching that colleague's name.
+
+Please check the spelling or enter their employee ID (or type 'reset' to restart)."""
 
 ACCOUNT_UNLOCKED_MESSAGE = "Your account has been successfully unlocked."
 
