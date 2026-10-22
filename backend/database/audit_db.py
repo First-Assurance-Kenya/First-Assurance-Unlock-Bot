@@ -5,9 +5,12 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from dotenv import load_dotenv
+
 logger = logging.getLogger("audit-db")
 
 ROOT = Path(__file__).resolve().parent.parent.parent
+load_dotenv(ROOT / ".env")
 DB_DIR = ROOT / "data"
 
 
@@ -62,14 +65,18 @@ def get_postgres_connection():
         db_url = os.getenv("DATABASE_URL")
         candidate_urls = []
         if db_url:
-            candidate_urls.append(db_url.replace("172.17.0.218", "localhost") if "172.17.0.218" in db_url else db_url)
             candidate_urls.append(db_url)
+            if "172.17.0.218" in db_url:
+                candidate_urls.append(db_url.replace("172.17.0.218", "localhost"))
+            elif "localhost" in db_url:
+                candidate_urls.append(db_url.replace("localhost", "172.17.0.218"))
 
         for target_url in candidate_urls:
             try:
-                conn = psycopg2.connect(target_url, connect_timeout=1, cursor_factory=RealDictCursor)
+                conn = psycopg2.connect(target_url, connect_timeout=3, cursor_factory=RealDictCursor)
                 conn.autocommit = True
                 _persistent_pg_conn = conn
+                logger.info("Connected to PostgreSQL at %s", target_url.split("@")[-1])
                 return _persistent_pg_conn
             except Exception:
                 continue
