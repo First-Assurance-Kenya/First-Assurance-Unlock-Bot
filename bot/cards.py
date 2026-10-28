@@ -182,6 +182,7 @@ def create_verification_card(
     is_entra_verified: bool = False,
     is_colleague_assist: bool = False,
     sponsor_name: Optional[str] = None,
+    colleague_unlock_count: int = 0,
 ) -> AdaptiveCard:
     """Card showing employee name verification, department, and unlock prompt."""
     facts = [
@@ -190,7 +191,8 @@ def create_verification_card(
         Fact(title="Account Status", value=status),
     ]
     if is_colleague_assist and sponsor_name:
-        facts.append(Fact(title="Assisted By (Sponsor)", value=f"{sponsor_name} (Entra Verified) 🛡️"))
+        count_label = f" (Colleague Unlock {colleague_unlock_count + 1} of 3 today)" if colleague_unlock_count is not None else ""
+        facts.append(Fact(title="Assisted By (Sponsor)", value=f"{sponsor_name}{count_label} 🛡️"))
     elif is_entra_verified:
         facts.append(Fact(title="Authentication", value="Microsoft Entra ID (MFA Verified) 🛡️"))
 
@@ -355,8 +357,14 @@ def create_already_unlocked_card(name: str, department: str) -> AdaptiveCard:
     )
 
 
-def create_it_referral_card(name: str, attempts: int = 3, reason: str = "Rate limit reached") -> AdaptiveCard:
+def create_it_referral_card(
+    name: str,
+    attempts: int = 3,
+    reason: str = "Rate limit reached",
+    details_text: Optional[str] = None,
+) -> AdaptiveCard:
     """Card displayed when a user exceeds maximum attempts and is referred to IT Help Desk."""
+    default_text = f"Security alert: You have reached {attempts} unlock requests today. For account safety, users are limited to 3 unlock requests per day."
     return AdaptiveCard(
         body=[
             create_brand_header(),
@@ -369,13 +377,14 @@ def create_it_referral_card(name: str, attempts: int = 3, reason: str = "Rate li
                         color="Attention",
                     ),
                     TextBlock(
-                        text=f"Security alert: You have reached {attempts} unlock requests today. For account safety, users are limited to 3 unlock requests per day.",
+                        text=details_text or default_text,
                         wrap=True,
                         spacing="Small",
                     ),
                     FactSet(
                         facts=[
                             Fact(title="Status", value="Referred to IT Helpdesk"),
+                            Fact(title="Policy Rule", value=reason),
                             Fact(title="Daily Requests", value=f"{attempts} / 3 Maximum per day"),
                             Fact(title="Help Desk Email", value="ithelpdesk@firstassurance.co.ke"),
                             Fact(title="Internal Phone", value="Ext 4444 / 020 2900000"),

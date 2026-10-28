@@ -2,7 +2,12 @@ import logging
 from enum import Enum
 from typing import Any, Dict, Optional, Tuple
 
-from backend.database.audit_db import check_rate_limit, log_audit_event
+from backend.database.audit_db import (
+    check_colleague_sponsorship_limit,
+    check_rate_limit,
+    get_sponsored_colleagues_today,
+    log_audit_event,
+)
 from backend.services.ad_service import find_user, find_user_by_name, unlock_account
 from backend.services.two_factor_service import (
     generate_otp,
@@ -29,6 +34,8 @@ from bot.cards import (
 from bot.responses import (
     ACCOUNT_UNLOCKED_MESSAGE,
     CANCEL_MESSAGE,
+    COLLEAGUE_DAILY_LIMIT_EXCEEDED_MESSAGE,
+    COLLEAGUE_MULTIPLE_EMPLOYEES_BLOCKED_MESSAGE,
     COLLEAGUE_VERIFY_FAILED_MESSAGE,
     ENTER_2FA_CODE_MESSAGE,
     ENTER_COLLEAGUE_NAME_MESSAGE,
@@ -472,6 +479,74 @@ class AccountUnlockBot:
             self.state = ConversationState.LOCKED_OUT
             return RATE_LIMIT_EXCEEDED_MESSAGE, create_it_referral_card(user["name"], attempts)
 
+        # 2b. Check if user typed their own name while in colleague mode
+        if self.is_assisting_colleague:
+            from backend.services.entra_service import EntraService
+            if EntraService.is_self_request(
+                requester_name=self.requester_name,
+                requester_email=self.requester_email,
+                requester_upn=self.requester_upn,
+                target_account=user,
+            ):
+                self.is_assisting_colleague = False
+
+        # 2c. Enforce Single Colleague Policy: An employee can only open for ONE colleague per day (up to 3 times)
+        colleague_unlock_count = 0
+        if self.is_assisting_colleague and not self.is_admin():
+            can_assist, reason, count, sponsored_name = check_colleague_sponsorship_limit(
+                requester_name=self.requester_name,
+                target_name=user["name"],
+                target_id=user.get("employee_id"),
+                max_unlocks_per_colleague=3,
+                window_minutes=1440,
+            )
+            colleague_unlock_count = count
+            if not can_assist:
+                self.state = ConversationState.LOCKED_OUT
+                if reason == "DIFFERENT_COLLEAGUE":
+                    log_audit_event(
+                        action="COLLEAGUE_POLICY_VIOLATION",
+                        requester_name=self.requester_name,
+                        requester_id=self.requester_id,
+                        target_account_id=user.get("employee_id"),
+                        target_account_name=user["name"],
+                        target_department=user.get("department"),
+                        status="BLOCKED",
+                        details=f"Requester already unlocked for colleague '{sponsored_name}' today. Blocked from assisting multiple employees ('{user['name']}').",
+                    )
+                    reply = COLLEAGUE_MULTIPLE_EMPLOYEES_BLOCKED_MESSAGE.format(
+                        sponsored_colleague=sponsored_name,
+                        target_colleague=user["name"],
+                    )
+                    card = create_it_referral_card(
+                        user["name"],
+                        attempts=count,
+                        reason="Single Colleague Policy",
+                        details_text=f"Under corporate security policy, employees may only assist 1 colleague per day (up to 3 times). You have already assisted {sponsored_name} today.",
+                    )
+                    return reply, card
+                elif reason == "COLLEAGUE_LIMIT_REACHED":
+                    log_audit_event(
+                        action="COLLEAGUE_LIMIT_EXCEEDED",
+                        requester_name=self.requester_name,
+                        requester_id=self.requester_id,
+                        target_account_id=user.get("employee_id"),
+                        target_account_name=user["name"],
+                        target_department=user.get("department"),
+                        status="BLOCKED",
+                        details=f"Requester reached maximum 3 daily unlocks for colleague '{sponsored_name}'.",
+                    )
+                    reply = COLLEAGUE_DAILY_LIMIT_EXCEEDED_MESSAGE.format(
+                        sponsored_colleague=sponsored_name,
+                    )
+                    card = create_it_referral_card(
+                        user["name"],
+                        attempts=3,
+                        reason="Colleague Limit Reached (3/3)",
+                        details_text=f"Maximum 3 unlocks for colleague {sponsored_name} reached today.",
+                    )
+                    return reply, card
+
         self.user_data = user
 
         # 3. Log verified account lookup (record both target employee and requesting user for shared PC usage)
@@ -496,13 +571,16 @@ class AccountUnlockBot:
                 status="Locked 🔒",
                 is_colleague_assist=self.is_assisting_colleague,
                 sponsor_name=self.requester_name if self.is_assisting_colleague else None,
+                colleague_unlock_count=colleague_unlock_count,
             )
             if self.is_assisting_colleague:
+                rem = max(0, 3 - colleague_unlock_count)
                 text_reply = (
                     f"Colleague Identity Verified ✅\n"
                     f"Colleague: {user['name']}\n"
                     f"Department: {user['department']}\n"
-                    f"Status: Locked 🔒\n\n"
+                    f"Status: Locked 🔒\n"
+                    f"*(Colleague unlock requests remaining today: {rem}/3)*\n\n"
                     f"Would you like to unlock this account on their behalf?"
                 )
             else:
@@ -702,8 +780,45 @@ class AccountUnlockBot:
     def execute_unlock(self) -> Tuple[str, Any]:
         """Perform unlock in Active Directory, write to audit log, and return success card."""
         emp_id = self.user_data["employee_id"]
+
+        # Final safety check on colleague sponsorship policy before unlock execution
+        if self.is_assisting_colleague and not self.is_admin():
+            can_assist, reason, count, sponsored_name = check_colleague_sponsorship_limit(
+                requester_name=self.requester_name,
+                target_name=self.user_data["name"],
+                target_id=emp_id,
+                max_unlocks_per_colleague=3,
+                window_minutes=1440,
+            )
+            if not can_assist:
+                self.state = ConversationState.LOCKED_OUT
+                if reason == "DIFFERENT_COLLEAGUE":
+                    reply = COLLEAGUE_MULTIPLE_EMPLOYEES_BLOCKED_MESSAGE.format(
+                        sponsored_colleague=sponsored_name,
+                        target_colleague=self.user_data["name"],
+                    )
+                    card = create_it_referral_card(
+                        self.user_data["name"],
+                        attempts=count,
+                        reason="Single Colleague Policy",
+                        details_text=f"Under corporate security policy, employees may only assist 1 colleague per day (up to 3 times). You have already assisted {sponsored_name} today.",
+                    )
+                    return reply, card
+                else:
+                    reply = COLLEAGUE_DAILY_LIMIT_EXCEEDED_MESSAGE.format(
+                        sponsored_colleague=sponsored_name,
+                    )
+                    card = create_it_referral_card(
+                        self.user_data["name"],
+                        attempts=3,
+                        reason="Colleague Limit Reached (3/3)",
+                        details_text=f"Maximum 3 unlocks for colleague {sponsored_name} reached today.",
+                    )
+                    return reply, card
+
         res = unlock_account(emp_id)
 
+        colleague_flag = " [Colleague Unlock]" if self.is_assisting_colleague else ""
         log_audit_event(
             action="UNLOCK_SUCCESS" if res.get("success") else "UNLOCK_FAILED",
             requester_name=self.requester_name,
@@ -712,7 +827,7 @@ class AccountUnlockBot:
             target_account_name=self.user_data["name"],
             target_department=self.user_data["department"],
             status="SUCCESS" if res.get("success") else "FAILURE",
-            details=f"Account unlock executed for '{self.user_data['name']}' requested via session of '{self.requester_name}'. 2FA required: {is_2fa_enabled()}.",
+            details=f"Account unlock executed for '{self.user_data['name']}' requested via session of '{self.requester_name}'{colleague_flag}. 2FA required: {is_2fa_enabled()}.",
         )
 
         self.state = ConversationState.COMPLETED

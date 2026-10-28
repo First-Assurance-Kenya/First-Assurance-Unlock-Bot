@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 
@@ -7,6 +8,10 @@ if hasattr(sys.stdout, "reconfigure"):
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+# Ensure test suite runs in clean mock testing mode
+os.environ["DATA_SOURCE"] = "mock"
+os.environ["ENVIRONMENT"] = "UAT"
 
 from backend.database.audit_db import clear_audit_logs, get_audit_logs
 from backend.services.ad_service import (
@@ -95,7 +100,58 @@ if "verification code" in reply.lower() or "2fa" in reply.lower() or "code" in r
     reply, card = handle_user_input(cid_colleague, text=otp, requester_name="John Smith", requester_id="29:john456")
 
 assert mock_users["NEWTON01"]["locked"] is False
-print("[✓] Colleague Unlocked: Account unlocked with sponsor audit trail.")
+print("[✓] Colleague Unlocked: Account unlocked with sponsor audit trail (Attempt 1/3).")
+
+# Case C: John Smith attempts to unlock a DIFFERENT colleague (Jane Doe) -> BLOCKED
+cid_colleague_2 = "teams-session-colleague-diff"
+handle_user_input(cid_colleague_2, text="Hello Bot", requester_name="John Smith", requester_id="29:john456")
+handle_user_input(cid_colleague_2, text="2", requester_name="John Smith", requester_id="29:john456")
+reply, card = handle_user_input(cid_colleague_2, text="Jane Doe", requester_name="John Smith", requester_id="29:john456")
+print("\n[USER (John Smith attempting 2nd colleague)]: Jane Doe")
+print("[BOT]:", reply)
+assert "Colleague Assistance Limit Reached" in reply or "already assisted" in reply
+assert card is not None, "Referral card must be present"
+facts = extract_facts(card)
+assert facts["Status"] == "Referred to IT Helpdesk"
+print("[✓] Single Colleague Policy Verified: John Smith prevented from opening accounts for multiple colleagues.")
+
+# Case D: John Smith unlocks the SAME colleague (Newton Kibe) a 2nd time -> ALLOWED
+mock_users["NEWTON01"]["locked"] = True
+cid_colleague_same2 = "teams-session-colleague-same2"
+handle_user_input(cid_colleague_same2, text="Hello Bot", requester_name="John Smith", requester_id="29:john456")
+handle_user_input(cid_colleague_same2, text="2", requester_name="John Smith", requester_id="29:john456")
+reply, card = handle_user_input(cid_colleague_same2, text="Newton Kibe", requester_name="John Smith", requester_id="29:john456")
+assert "Colleague Identity Verified" in reply
+reply, card = handle_user_input(cid_colleague_same2, text="Yes", requester_name="John Smith", requester_id="29:john456")
+if "verification code" in reply.lower() or "2fa" in reply.lower() or "code" in reply.lower():
+    otp = get_active_otp("NEWTON01")
+    reply, card = handle_user_input(cid_colleague_same2, text=otp, requester_name="John Smith", requester_id="29:john456")
+assert mock_users["NEWTON01"]["locked"] is False
+print("[✓] Repeated Colleague Unlock Allowed: John Smith unlocked Newton Kibe a 2nd time (Attempt 2/3).")
+
+# Case E: John Smith unlocks the SAME colleague (Newton Kibe) a 3rd time -> ALLOWED
+mock_users["NEWTON01"]["locked"] = True
+cid_colleague_same3 = "teams-session-colleague-same3"
+handle_user_input(cid_colleague_same3, text="Hello Bot", requester_name="John Smith", requester_id="29:john456")
+handle_user_input(cid_colleague_same3, text="2", requester_name="John Smith", requester_id="29:john456")
+reply, card = handle_user_input(cid_colleague_same3, text="Newton Kibe", requester_name="John Smith", requester_id="29:john456")
+assert "Colleague Identity Verified" in reply
+reply, card = handle_user_input(cid_colleague_same3, text="Yes", requester_name="John Smith", requester_id="29:john456")
+if "verification code" in reply.lower() or "2fa" in reply.lower() or "code" in reply.lower():
+    otp = get_active_otp("NEWTON01")
+    reply, card = handle_user_input(cid_colleague_same3, text=otp, requester_name="John Smith", requester_id="29:john456")
+assert mock_users["NEWTON01"]["locked"] is False
+print("[✓] Repeated Colleague Unlock Allowed: John Smith unlocked Newton Kibe a 3rd time (Attempt 3/3).")
+
+# Case F: John Smith attempts a 4th unlock for Newton Kibe -> BLOCKED (Exceeded 3 attempts)
+cid_colleague_same4 = "teams-session-colleague-same4"
+handle_user_input(cid_colleague_same4, text="Hello Bot", requester_name="John Smith", requester_id="29:john456")
+handle_user_input(cid_colleague_same4, text="2", requester_name="John Smith", requester_id="29:john456")
+reply, card = handle_user_input(cid_colleague_same4, text="Newton Kibe", requester_name="John Smith", requester_id="29:john456")
+print("\n[USER (John Smith attempting 4th unlock for Newton)]: Newton Kibe")
+print("[BOT]:", reply)
+assert "limit reached" in reply.lower() or "daily" in reply.lower()
+print("[✓] Colleague 3-Limit Verified: Blocked on 4th attempt.")
 
 
 print("\n=================================================================")

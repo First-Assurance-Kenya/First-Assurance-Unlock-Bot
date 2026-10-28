@@ -50,6 +50,22 @@ For account security, users may only request to unlock their account up to 3 tim
 • Phone: Ext 4444 / 020 2900000
 • Hours: Mon - Fri, 8:00 AM - 5:00 PM"""
 
+COLLEAGUE_MULTIPLE_EMPLOYEES_BLOCKED_MESSAGE = """⚠️ Colleague Assistance Limit Reached
+
+Under First Assurance corporate security policy, an employee may only assist one colleague per day (up to 3 times for that colleague).
+
+You have already assisted colleague '{sponsored_colleague}' today. You cannot unlock accounts for multiple different colleagues.
+
+Please advise '{target_colleague}' to contact the IT Service Desk directly:
+• Email: ithelpdesk@firstassurance.co.ke
+• Phone: Ext 4444 / 020 2900000"""
+
+COLLEAGUE_DAILY_LIMIT_EXCEEDED_MESSAGE = """⚠️ Daily unlock limit reached for colleague '{sponsored_colleague}' (3/3 requests today).
+
+For account security, you may only request to unlock a colleague's account up to 3 times in a single day. Your request has been referred to the IT Service Desk:
+• Email: ithelpdesk@firstassurance.co.ke
+• Phone: Ext 4444 / 020 2900000"""
+
 UNAUTHORIZED_ACCOUNT_MESSAGE = """🛡️ Security Policy Violation:
 
 You are authenticated as '{requester}'. Self-service account unlock is restricted to your own verified identity. You cannot unlock an account belonging to '{target}'.

@@ -290,6 +290,154 @@ def check_rate_limit(
     return False, attempts
 
 
+def get_sponsored_colleagues_today(
+    requester_name: str,
+    window_minutes: int = 1440,
+    environment: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Retrieve all distinct colleagues unlocked by this requester in the past 24 hours.
+    Returns: [{'colleague_name': str, 'target_id': str, 'unlock_count': int, 'latest_time': str}, ...]
+    Filters out self-unlocks (where requester unlocked their own account).
+    """
+    env = environment or get_current_environment()
+    schema = get_target_schema(env)
+    cutoff = datetime.now() - timedelta(minutes=window_minutes)
+    req_clean = (requester_name or "").strip().lower()
+
+    if is_postgres_configured():
+        pg_conn = get_postgres_connection()
+        if pg_conn:
+            try:
+                with pg_conn.cursor() as cur:
+                    table = f"{schema}.account_unlock_audit"
+                    cur.execute(
+                        f"""
+                        SELECT 
+                            target_account,
+                            COUNT(*) AS unlock_count,
+                            MAX(event_timestamp) AS latest_time
+                        FROM {table}
+                        WHERE requested_by = %s
+                          AND action_taken = 'UNLOCK_SUCCESS'
+                          AND status = 'SUCCESS'
+                          AND event_timestamp >= %s
+                        GROUP BY target_account
+                        ORDER BY latest_time DESC
+                        """,
+                        (requester_name, cutoff),
+                    )
+                    rows = cur.fetchall()
+                    sponsored = []
+                    for row in rows:
+                        tgt = (row["target_account"] or "").strip()
+                        tgt_lower = tgt.lower()
+                        # Filter out self-unlocks (where target name contains requester or vice versa)
+                        if req_clean and (tgt_lower == req_clean or req_clean in tgt_lower or tgt_lower in req_clean):
+                            continue
+                        sponsored.append({
+                            "colleague_name": tgt,
+                            "target_id": tgt,
+                            "unlock_count": row["unlock_count"],
+                            "latest_time": str(row["latest_time"]),
+                        })
+                    return sponsored
+            except Exception as e:
+                global _persistent_pg_conn
+                _persistent_pg_conn = None
+                logger.warning("PostgreSQL get_sponsored_colleagues failed (%s), fallback to SQLite", e)
+
+    target_db = get_db_path(env)
+    cutoff_iso = cutoff.isoformat()
+    with get_sqlite_connection(target_db) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT 
+                target_account_name,
+                target_account_id,
+                COUNT(*) AS unlock_count,
+                MAX(timestamp) AS latest_time
+            FROM audit_logs
+            WHERE requester_name = ?
+              AND action = 'UNLOCK_SUCCESS'
+              AND status = 'SUCCESS'
+              AND timestamp >= ?
+            GROUP BY target_account_name, target_account_id
+            ORDER BY latest_time DESC
+            """,
+            (requester_name, cutoff_iso),
+        )
+        rows = cursor.fetchall()
+        sponsored = []
+        for row in rows:
+            tgt_name = (row["target_account_name"] or "").strip()
+            tgt_id = (row["target_account_id"] or "").strip()
+            tgt = tgt_name or tgt_id
+            tgt_lower = tgt.lower()
+            if req_clean and (tgt_lower == req_clean or req_clean in tgt_lower or tgt_lower in req_clean):
+                continue
+            sponsored.append({
+                "colleague_name": tgt_name,
+                "target_id": tgt_id,
+                "unlock_count": row["unlock_count"],
+                "latest_time": str(row["latest_time"]),
+            })
+        return sponsored
+
+
+def check_colleague_sponsorship_limit(
+    requester_name: str,
+    target_name: str,
+    target_id: Optional[str] = None,
+    max_unlocks_per_colleague: int = 3,
+    window_minutes: int = 1440,
+    environment: Optional[str] = None,
+) -> Tuple[bool, str, int, Optional[str]]:
+    """
+    Check if requester is allowed to unlock for this specific colleague.
+    Rule: An employee can ONLY unlock for ONE distinct colleague per 24 hours (up to 3 times).
+
+    Returns: (is_allowed: bool, reason: str, count: int, current_sponsored_colleague: Optional[str])
+    Reasons:
+      - "ALLOWED_FIRST": Requester has not unlocked any colleague yet today.
+      - "ALLOWED_SAME": Requester is unlocking the same colleague they already assisted (< 3 times).
+      - "DIFFERENT_COLLEAGUE": Requester has already unlocked a different colleague today.
+      - "COLLEAGUE_LIMIT_REACHED": Requester has already unlocked this colleague 3 times today.
+    """
+    colleagues = get_sponsored_colleagues_today(
+        requester_name, window_minutes=window_minutes, environment=environment
+    )
+    if not colleagues:
+        return True, "ALLOWED_FIRST", 0, None
+
+    primary = colleagues[0]
+    sponsored_name = primary["colleague_name"]
+    sponsored_id = primary.get("target_id") or ""
+    unlock_count = primary["unlock_count"]
+
+    tgt_clean = (target_name or "").strip().lower()
+    tgt_id_clean = (target_id or "").strip().lower()
+    spon_clean = sponsored_name.strip().lower()
+    spon_id_clean = sponsored_id.strip().lower()
+
+    matches = (
+        tgt_clean in spon_clean
+        or spon_clean in tgt_clean
+        or (tgt_id_clean and tgt_id_clean == spon_id_clean)
+        or (tgt_id_clean and tgt_id_clean in spon_clean)
+        or (spon_clean and spon_clean in tgt_clean)
+    )
+
+    if not matches:
+        return False, "DIFFERENT_COLLEAGUE", unlock_count, sponsored_name
+
+    if unlock_count >= max_unlocks_per_colleague:
+        return False, "COLLEAGUE_LIMIT_REACHED", unlock_count, sponsored_name
+
+    return True, "ALLOWED_SAME", unlock_count, sponsored_name
+
+
 def reset_rate_limit(requester_name: str, environment: Optional[str] = None) -> None:
     """Clear failed attempts for a user (useful for admin testing)."""
     env = environment or get_current_environment()
