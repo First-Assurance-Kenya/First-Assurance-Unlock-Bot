@@ -72,7 +72,7 @@ def run_rate_limiting_test(custom_user: str = None):
         print(f" Is Rate Limited?:    {is_locked}")
         print(f" Bot Message Output:\n{reply}")
         if card:
-            print(" >> [Adaptive Card Attached]: IT Referral Card (Contact: ithelpdesk@firstassurance.co.ke | Ext 4444)")
+            print(" >> [Adaptive Card Attached]: IT Referral Card (Contact: itstaff@firstassurance.co.ke)")
 
     print("\n--- STEP 4: Attempting further interaction while locked out ---")
     locked_reply, card = bot.process_input(text="Please unlock me now!")

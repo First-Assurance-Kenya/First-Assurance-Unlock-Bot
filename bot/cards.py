@@ -362,9 +362,28 @@ def create_it_referral_card(
     attempts: int = 3,
     reason: str = "Rate limit reached",
     details_text: Optional[str] = None,
+    ticket_ref: Optional[str] = None,
 ) -> AdaptiveCard:
     """Card displayed when a user exceeds maximum attempts and is referred to IT Help Desk."""
     default_text = f"Security alert: You have reached {attempts} unlock requests today. For account safety, users are limited to 3 unlock requests per day."
+    facts = [
+        Fact(title="Status", value="Referred to IT Helpdesk"),
+    ]
+    if ticket_ref:
+        facts.append(Fact(title="Incident Ticket", value=f"{ticket_ref} 🎫"))
+    facts.extend([
+        Fact(title="Policy Rule", value=reason),
+        Fact(title="Daily Requests", value=f"{attempts} / 3 Maximum per day"),
+        Fact(title="Help Desk Email", value="itstaff@firstassurance.co.ke"),
+        Fact(title="Support Hours", value="Mon - Fri, 8:00 AM - 5:00 PM"),
+    ])
+
+    sub_msg = (
+        f"An incident ticket ({ticket_ref}) has been automatically sent to the IT Service Desk. An IT engineer will verify your identity manually."
+        if ticket_ref
+        else "An IT support engineer will verify your identity manually and assist you with resetting your credentials."
+    )
+
     return AdaptiveCard(
         body=[
             create_brand_header(),
@@ -381,18 +400,9 @@ def create_it_referral_card(
                         wrap=True,
                         spacing="Small",
                     ),
-                    FactSet(
-                        facts=[
-                            Fact(title="Status", value="Referred to IT Helpdesk"),
-                            Fact(title="Policy Rule", value=reason),
-                            Fact(title="Daily Requests", value=f"{attempts} / 3 Maximum per day"),
-                            Fact(title="Help Desk Email", value="ithelpdesk@firstassurance.co.ke"),
-                            Fact(title="Internal Phone", value="Ext 4444 / 020 2900000"),
-                            Fact(title="Support Hours", value="Mon - Fri, 8:00 AM - 5:00 PM"),
-                        ]
-                    ),
+                    FactSet(facts=facts),
                     TextBlock(
-                        text="An IT support engineer will verify your identity manually and assist you with resetting your credentials.",
+                        text=sub_msg,
                         isSubtle=True,
                         wrap=True,
                         spacing="Medium",
@@ -435,7 +445,7 @@ def create_unauthorized_card(requester_name: str, target_name: str) -> AdaptiveC
                         ]
                     ),
                     TextBlock(
-                        text="If you are experiencing issues with another employee's account, please have them contact IT Help Desk or reach out directly to ithelpdesk@firstassurance.co.ke.",
+                        text="If you are experiencing issues with another employee's account, please have them contact IT Help Desk or reach out directly to itstaff@firstassurance.co.ke.",
                         isSubtle=True,
                         wrap=True,
                         spacing="Medium",

@@ -180,7 +180,8 @@ assert card is not None, "Referral card must be present"
 facts = extract_facts(card)
 print(">>> Referral Card Facts:", facts)
 assert facts["Status"] == "Referred to IT Helpdesk"
-assert "ithelpdesk@firstassurance.co.ke" in facts["Help Desk Email"]
+assert "itstaff@firstassurance.co.ke" in facts["Help Desk Email"]
+assert "Internal Phone" not in facts, "Internal Phone should be removed from card"
 
 # Attempt 4 (Blocked by rate limiter)
 reply, card = handle_user_input(cid_rate, text="Hello Bot", requester_name=requester)
