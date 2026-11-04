@@ -183,13 +183,18 @@ def create_verification_card(
     is_colleague_assist: bool = False,
     sponsor_name: Optional[str] = None,
     colleague_unlock_count: int = 0,
+    username: Optional[str] = None,
 ) -> AdaptiveCard:
     """Card showing employee name verification, department, and unlock prompt."""
     facts = [
         Fact(title="Full Name" if not is_colleague_assist else "Colleague Name", value=name),
+    ]
+    if username and username.lower() != name.lower():
+        facts.append(Fact(title="AD Username", value=username))
+    facts.extend([
         Fact(title="Department", value=department),
         Fact(title="Account Status", value=status),
-    ]
+    ])
     if is_colleague_assist and sponsor_name:
         count_label = f" (Colleague Unlock {colleague_unlock_count + 1} of 3 today)" if colleague_unlock_count is not None else ""
         facts.append(Fact(title="Assisted By (Sponsor)", value=f"{sponsor_name}{count_label} 🛡️"))
@@ -279,8 +284,17 @@ def create_verification_card(
 
 
 
-def create_success_card(name: str, department: str) -> AdaptiveCard:
+def create_success_card(name: str, department: str, username: Optional[str] = None) -> AdaptiveCard:
     """Card confirming successful account unlock with First Assurance branding."""
+    facts = [
+        Fact(title="Full Name", value=name),
+    ]
+    if username and username.lower() != name.lower():
+        facts.append(Fact(title="AD Username", value=username))
+    facts.extend([
+        Fact(title="Department", value=department),
+        Fact(title="Account Status", value="Active / Unlocked 🟢"),
+    ])
     return AdaptiveCard(
         body=[
             create_brand_header(),
@@ -295,13 +309,7 @@ def create_success_card(name: str, department: str) -> AdaptiveCard:
                         size="Large",
                         color="Good",
                     ),
-                    FactSet(
-                        facts=[
-                            Fact(title="Full Name", value=name),
-                            Fact(title="Department", value=department),
-                            Fact(title="Account Status", value="Active / Unlocked 🟢"),
-                        ]
-                    ),
+                    FactSet(facts=facts),
                     TextBlock(
                         text="Your account has been successfully unlocked. You can now try signing in again.",
                         spacing="Medium",
@@ -318,8 +326,17 @@ def create_success_card(name: str, department: str) -> AdaptiveCard:
     )
 
 
-def create_already_unlocked_card(name: str, department: str) -> AdaptiveCard:
+def create_already_unlocked_card(name: str, department: str, username: Optional[str] = None) -> AdaptiveCard:
     """Card when the account is already active."""
+    facts = [
+        Fact(title="Full Name", value=name),
+    ]
+    if username and username.lower() != name.lower():
+        facts.append(Fact(title="AD Username", value=username))
+    facts.extend([
+        Fact(title="Department", value=department),
+        Fact(title="Account Status", value="Already Unlocked 🟢"),
+    ])
     return AdaptiveCard(
         body=[
             create_brand_header(),
@@ -333,13 +350,7 @@ def create_already_unlocked_card(name: str, department: str) -> AdaptiveCard:
                         weight="Bolder",
                         size="Large",
                     ),
-                    FactSet(
-                        facts=[
-                            Fact(title="Full Name", value=name),
-                            Fact(title="Department", value=department),
-                            Fact(title="Account Status", value="Already Unlocked 🟢"),
-                        ]
-                    ),
+                    FactSet(facts=facts),
                     TextBlock(
                         text="Your account is not currently locked. No changes were made.",
                         spacing="Medium",

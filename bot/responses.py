@@ -4,8 +4,8 @@ MENU_MESSAGE = """Hello! How would you like me to help you today?
 
 1. 🔓 Unlock Account"""
 
-ENTER_FULL_NAME_MESSAGE = "Please enter your full name."
-ENTER_COLLEAGUE_NAME_MESSAGE = "Please enter your colleague's full name or employee ID:"
+ENTER_FULL_NAME_MESSAGE = "Please enter your corporate username (e.g. nkibe) or full name:"
+ENTER_COLLEAGUE_NAME_MESSAGE = "Please enter your colleague's username (e.g. nkibe) or full name:"
 
 VERIFY_SUCCESS_LOCKED_TEMPLATE = """Identity verified.
 Name: {name}
@@ -21,13 +21,13 @@ Status: Already Unlocked 🟢
 
 Your account is not currently locked. No changes were made."""
 
-VERIFY_FAILED_MESSAGE = """I couldn't find an account matching that full name.
+VERIFY_FAILED_MESSAGE = """I couldn't find an account matching that username or name.
 
-Please check your spelling and enter your full name again (or type 'reset' to restart)."""
+Please check the spelling and enter your username (e.g. nkibe) or full name again (or type 'reset' to restart)."""
 
-COLLEAGUE_VERIFY_FAILED_MESSAGE = """I couldn't find an account matching that colleague's name.
+COLLEAGUE_VERIFY_FAILED_MESSAGE = """I couldn't find an account matching that colleague's username or name.
 
-Please check the spelling or enter their employee ID (or type 'reset' to restart)."""
+Please check the spelling and enter their username (e.g. nkibe) or full name again (or type 'reset' to restart)."""
 
 ACCOUNT_UNLOCKED_MESSAGE = "Your account has been successfully unlocked."
 

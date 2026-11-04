@@ -78,7 +78,7 @@ cid_colleague = "teams-session-colleague"
 handle_user_input(cid_colleague, text="Hello Bot", requester_name="John Smith", requester_id="29:john456")
 # Choose 2 for colleague unlock
 reply, card = handle_user_input(cid_colleague, text="2", requester_name="John Smith", requester_id="29:john456")
-assert "Please enter your colleague's full name or employee ID:" in reply
+assert "Please enter your colleague's username" in reply
 print("[✓] Colleague Prompt Verified: Bot asked for colleague's full name.")
 
 # Provide colleague's name

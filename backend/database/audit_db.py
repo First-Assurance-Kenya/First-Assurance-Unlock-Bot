@@ -168,7 +168,10 @@ def log_audit_event(
                 with pg_conn:
                     with pg_conn.cursor() as cur:
                         table = f"{schema}.account_unlock_audit"
-                        target = target_account_name or target_account_id or "N/A"
+                        if target_account_id and target_account_name and target_account_id.lower() != target_account_name.lower():
+                            target = f"{target_account_id} ({target_account_name})"
+                        else:
+                            target = target_account_id or target_account_name or "N/A"
                         cur.execute(
                             f"""
                             INSERT INTO {table} (

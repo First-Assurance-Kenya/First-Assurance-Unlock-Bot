@@ -148,6 +148,7 @@ class AccountUnlockBot:
         self.requester_upn = requester_upn
         self.requester_aad_id = requester_aad_id
         self.is_assisting_colleague: bool = False
+        self.enforce_admin_rate_limit: bool = False
 
     def set_requester(
         self,
@@ -186,8 +187,10 @@ class AccountUnlockBot:
         return False
 
     def check_requester_rate_limit(self) -> Tuple[bool, int]:
-        """Check if this requester has exceeded the 3 daily unlock requests limit (admins are exempt)."""
-        if self.is_admin():
+        """Check if this requester has exceeded the 3 daily unlock requests limit (admins are exempt unless test mode is enabled)."""
+        import os
+        env_enforce = os.getenv("ADMIN_ENFORCE_RATE_LIMIT", "false").lower() in ("true", "1", "yes")
+        if self.is_admin() and not getattr(self, "enforce_admin_rate_limit", False) and not env_enforce:
             return False, 0
         return check_rate_limit(self.requester_name, max_attempts=3, window_minutes=1440)
 
@@ -445,6 +448,18 @@ class AccountUnlockBot:
             self.reset()
             return "🔒 All demo accounts have been reset to Locked. Type 'Hello Bot' to begin.", None
 
+        if text_lower in ("ratelimit on", "enforce ratelimit", "ratelimit true"):
+            if not self.is_admin():
+                return "⛔ **Access Denied:** Only authorized IT Administrators can modify test policies.", None
+            self.enforce_admin_rate_limit = True
+            return "🛠️ **Rate-Limiting Test Mode ENABLED**: Your admin session is now subject to the standard 3/3 daily limit and IT email alerts.\n\nType **Hello Bot** to begin testing.", None
+
+        if text_lower in ("ratelimit off", "ratelimit false"):
+            if not self.is_admin():
+                return "⛔ **Access Denied:** Only authorized IT Administrators can modify test policies.", None
+            self.enforce_admin_rate_limit = False
+            return "🛡️ **Admin Rate-Limit Exemption RESTORED**: You are now exempt from unlock limits.", None
+
 
 
         if text_lower in RESET_COMMANDS:
@@ -488,7 +503,8 @@ class AccountUnlockBot:
         return TRIGGER_PROMPT, None
 
     def handle_name_verification(self, name_raw: str) -> Tuple[str, Optional[Any]]:
-        user = find_user_by_name(name_raw) or find_user(name_raw)
+        # Look up by corporate username (sAMAccountName) first, then display name
+        user = find_user(name_raw) or find_user_by_name(name_raw)
 
         # 1. User not found -> Log failure and check rate limit
         if not user:
@@ -513,8 +529,17 @@ class AccountUnlockBot:
                     self.requester_name, attempts, ticket_ref=ticket_ref
                 )
 
-            remaining = max(0, 3 - attempts)
             fail_msg = COLLEAGUE_VERIFY_FAILED_MESSAGE if self.is_assisting_colleague else VERIFY_FAILED_MESSAGE
+
+            import os
+            is_exempt = self.is_admin() and not getattr(self, "enforce_admin_rate_limit", False) and not os.getenv("ADMIN_ENFORCE_RATE_LIMIT", "").lower() in ("true", "1", "yes")
+            if is_exempt:
+                return (
+                    f"{fail_msg}\n\n*(IT Administrator: Rate-limit exempt. Type 'ratelimit on' to test limits)*",
+                    None,
+                )
+
+            remaining = max(0, 3 - attempts)
             return (
                 f"{fail_msg}\n\n*(Daily unlock requests remaining: {remaining}/3)*",
                 None,
@@ -560,7 +585,9 @@ class AccountUnlockBot:
 
         # 2c. Enforce Single Colleague Policy: An employee can only open for ONE colleague per day (up to 3 times)
         colleague_unlock_count = 0
-        if self.is_assisting_colleague and not self.is_admin():
+        import os
+        should_enforce_colleague = not self.is_admin() or getattr(self, "enforce_admin_rate_limit", False) or os.getenv("ADMIN_ENFORCE_RATE_LIMIT", "").lower() in ("true", "1", "yes")
+        if self.is_assisting_colleague and should_enforce_colleague:
             can_assist, reason, count, sponsored_name = check_colleague_sponsorship_limit(
                 requester_name=self.requester_name,
                 target_name=user["name"],
@@ -658,6 +685,7 @@ class AccountUnlockBot:
                 is_colleague_assist=self.is_assisting_colleague,
                 sponsor_name=self.requester_name if self.is_assisting_colleague else None,
                 colleague_unlock_count=colleague_unlock_count,
+                username=user.get("employee_id"),
             )
             if self.is_assisting_colleague:
                 rem = max(0, 3 - colleague_unlock_count)
@@ -679,7 +707,8 @@ class AccountUnlockBot:
             self.state = ConversationState.COMPLETED
             card = create_already_unlocked_card(
                 user["name"],
-                user["department"]
+                user["department"],
+                username=user.get("employee_id"),
             )
             if self.is_assisting_colleague:
                 text_reply = f"Identity verified for colleague {user['name']}.\n\nTheir account is currently Already Unlocked 🟢. No changes were made."
@@ -711,7 +740,7 @@ class AccountUnlockBot:
         # 3. Fallback to manual entry if Entra identity is not linked
         if not user:
             self.state = ConversationState.WAITING_FOR_NAME
-            return "Could not automatically match your Entra ID login to an Active Directory account.\n\nPlease enter your employee ID or full name:", None
+            return "Could not automatically match your Entra ID login to an Active Directory account.\n\nPlease enter your corporate username (e.g. nkibe) or full name:", None
 
         # Check rate limit
         is_limited, attempts = check_rate_limit(user["employee_id"], max_attempts=3, window_minutes=1440)
@@ -761,6 +790,7 @@ class AccountUnlockBot:
                 user["department"],
                 status="Locked 🔒",
                 is_entra_verified=True,
+                username=user.get("employee_id"),
             )
             text_reply = f"Hello {user['name']}! We verified your identity via Microsoft Entra ID.\n\nYour account is currently **Locked 🔒**. Click below to unlock immediately:"
             return text_reply, card
@@ -898,7 +928,8 @@ class AccountUnlockBot:
         emp_id = self.user_data["employee_id"]
 
         # Final safety check on colleague sponsorship policy before unlock execution
-        if self.is_assisting_colleague and not self.is_admin():
+        should_enforce_colleague = not self.is_admin() or getattr(self, "enforce_admin_rate_limit", False) or os.getenv("ADMIN_ENFORCE_RATE_LIMIT", "").lower() in ("true", "1", "yes")
+        if self.is_assisting_colleague and should_enforce_colleague:
             can_assist, reason, count, sponsored_name = check_colleague_sponsorship_limit(
                 requester_name=self.requester_name,
                 target_name=self.user_data["name"],
@@ -965,7 +996,8 @@ class AccountUnlockBot:
         self.state = ConversationState.COMPLETED
         card = create_success_card(
             self.user_data["name"],
-            self.user_data["department"]
+            self.user_data["department"],
+            username=self.user_data.get("employee_id"),
         )
         return ACCOUNT_UNLOCKED_MESSAGE, card
 
