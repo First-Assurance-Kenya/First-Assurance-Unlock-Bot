@@ -24,11 +24,11 @@ _COOLDOWN_MINUTES = 30
 def get_smtp_config():
     """Load SMTP settings from environment variables with safe enterprise defaults."""
     return {
-        "host": os.getenv("SMTP_HOST", "172.17.0.220").strip(),
+        "host": os.getenv("SMTP_HOST", "firstassurance-co-ke.mail.protection.outlook.com").strip(),
         "port": int(os.getenv("SMTP_PORT", "25").strip() or "25"),
         "user": os.getenv("SMTP_USER", "").strip(),
         "password": os.getenv("SMTP_PASSWORD", "").strip(),
-        "use_tls": os.getenv("SMTP_USE_TLS", "false").lower() in ("true", "1", "yes"),
+        "use_tls": os.getenv("SMTP_USE_TLS", "true").lower() in ("true", "1", "yes"),
         "from_addr": os.getenv("SMTP_FROM", "unlock-bot@firstassurance.co.ke").strip(),
         "to_addrs": [
             addr.strip()
