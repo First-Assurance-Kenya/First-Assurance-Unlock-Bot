@@ -583,7 +583,7 @@ class AccountUnlockBot:
             ):
                 self.is_assisting_colleague = False
 
-        # 2c. Enforce Single Colleague Policy: An employee can only open for ONE colleague per day (up to 3 times)
+        # 2c. Enforce Colleague Unlock Limit: Maximum 3 unlocks per colleague in 24 hours
         colleague_unlock_count = 0
         import os
         should_enforce_colleague = not self.is_admin() or getattr(self, "enforce_admin_rate_limit", False) or os.getenv("ADMIN_ENFORCE_RATE_LIMIT", "").lower() in ("true", "1", "yes")
@@ -598,67 +598,35 @@ class AccountUnlockBot:
             colleague_unlock_count = count
             if not can_assist:
                 self.state = ConversationState.LOCKED_OUT
-                if reason == "DIFFERENT_COLLEAGUE":
-                    audit_id = log_audit_event(
-                        action="COLLEAGUE_POLICY_VIOLATION",
-                        requester_name=self.requester_name,
-                        requester_id=self.requester_id,
-                        target_account_id=user.get("employee_id"),
-                        target_account_name=user["name"],
-                        target_department=user.get("department"),
-                        status="BLOCKED",
-                        details=f"Requester already unlocked for colleague '{sponsored_name}' today. Blocked from assisting multiple employees ('{user['name']}').",
-                    )
-                    ticket_ref = self.notify_it_limit_reached(
-                        target_name=user["name"],
-                        target_id=user.get("employee_id"),
-                        department=user.get("department"),
-                        attempts=count,
-                        reason=f"Colleague Policy: Attempted to unlock for multiple employees. Already sponsored '{sponsored_name}' today.",
-                        audit_id=audit_id,
-                    )
-                    reply = COLLEAGUE_MULTIPLE_EMPLOYEES_BLOCKED_MESSAGE.format(
-                        sponsored_colleague=sponsored_name,
-                        target_colleague=user["name"],
-                    )
-                    card = create_it_referral_card(
-                        user["name"],
-                        attempts=count,
-                        reason="Single Colleague Policy",
-                        details_text=f"Under corporate security policy, employees may only assist 1 colleague per day (up to 3 times). You have already assisted {sponsored_name} today.",
-                        ticket_ref=ticket_ref,
-                    )
-                    return reply, card
-                elif reason == "COLLEAGUE_LIMIT_REACHED":
-                    audit_id = log_audit_event(
-                        action="COLLEAGUE_LIMIT_EXCEEDED",
-                        requester_name=self.requester_name,
-                        requester_id=self.requester_id,
-                        target_account_id=user.get("employee_id"),
-                        target_account_name=user["name"],
-                        target_department=user.get("department"),
-                        status="BLOCKED",
-                        details=f"Requester reached maximum 3 daily unlocks for colleague '{sponsored_name}'.",
-                    )
-                    ticket_ref = self.notify_it_limit_reached(
-                        target_name=user["name"],
-                        target_id=user.get("employee_id"),
-                        department=user.get("department"),
-                        attempts=3,
-                        reason=f"Colleague daily unlock limit reached (3/3) for '{sponsored_name}'",
-                        audit_id=audit_id,
-                    )
-                    reply = COLLEAGUE_DAILY_LIMIT_EXCEEDED_MESSAGE.format(
-                        sponsored_colleague=sponsored_name,
-                    )
-                    card = create_it_referral_card(
-                        user["name"],
-                        attempts=3,
-                        reason="Colleague Limit Reached (3/3)",
-                        details_text=f"Maximum 3 unlocks for colleague {sponsored_name} reached today.",
-                        ticket_ref=ticket_ref,
-                    )
-                    return reply, card
+                audit_id = log_audit_event(
+                    action="COLLEAGUE_LIMIT_EXCEEDED",
+                    requester_name=self.requester_name,
+                    requester_id=self.requester_id,
+                    target_account_id=user.get("employee_id"),
+                    target_account_name=user["name"],
+                    target_department=user.get("department"),
+                    status="BLOCKED",
+                    details=f"Requester reached maximum 3 daily unlocks for colleague '{user['name']}'.",
+                )
+                ticket_ref = self.notify_it_limit_reached(
+                    target_name=user["name"],
+                    target_id=user.get("employee_id"),
+                    department=user.get("department"),
+                    attempts=3,
+                    reason=f"Colleague daily unlock limit reached (3/3) for '{user['name']}'",
+                    audit_id=audit_id,
+                )
+                reply = COLLEAGUE_DAILY_LIMIT_EXCEEDED_MESSAGE.format(
+                    sponsored_colleague=user["name"],
+                )
+                card = create_it_referral_card(
+                    user["name"],
+                    attempts=3,
+                    reason="Colleague Limit Reached (3/3)",
+                    details_text=f"Maximum 3 unlocks for colleague {user['name']} reached today. Your request has been referred to the IT Service Desk.",
+                    ticket_ref=ticket_ref,
+                )
+                return reply, card
 
         self.user_data = user
 
@@ -939,45 +907,24 @@ class AccountUnlockBot:
             )
             if not can_assist:
                 self.state = ConversationState.LOCKED_OUT
-                if reason == "DIFFERENT_COLLEAGUE":
-                    ticket_ref = self.notify_it_limit_reached(
-                        target_name=self.user_data["name"],
-                        target_id=emp_id,
-                        department=self.user_data.get("department"),
-                        attempts=count,
-                        reason=f"Colleague Policy Violation: Attempted multiple colleagues. Already assisted {sponsored_name}.",
-                    )
-                    reply = COLLEAGUE_MULTIPLE_EMPLOYEES_BLOCKED_MESSAGE.format(
-                        sponsored_colleague=sponsored_name,
-                        target_colleague=self.user_data["name"],
-                    )
-                    card = create_it_referral_card(
-                        self.user_data["name"],
-                        attempts=count,
-                        reason="Single Colleague Policy",
-                        details_text=f"Under corporate security policy, employees may only assist 1 colleague per day (up to 3 times). You have already assisted {sponsored_name} today.",
-                        ticket_ref=ticket_ref,
-                    )
-                    return reply, card
-                else:
-                    ticket_ref = self.notify_it_limit_reached(
-                        target_name=self.user_data["name"],
-                        target_id=emp_id,
-                        department=self.user_data.get("department"),
-                        attempts=3,
-                        reason=f"Colleague unlock limit reached (3/3) for '{sponsored_name}'",
-                    )
-                    reply = COLLEAGUE_DAILY_LIMIT_EXCEEDED_MESSAGE.format(
-                        sponsored_colleague=sponsored_name,
-                    )
-                    card = create_it_referral_card(
-                        self.user_data["name"],
-                        attempts=3,
-                        reason="Colleague Limit Reached (3/3)",
-                        details_text=f"Maximum 3 unlocks for colleague {sponsored_name} reached today.",
-                        ticket_ref=ticket_ref,
-                    )
-                    return reply, card
+                ticket_ref = self.notify_it_limit_reached(
+                    target_name=self.user_data["name"],
+                    target_id=emp_id,
+                    department=self.user_data.get("department"),
+                    attempts=3,
+                    reason=f"Colleague unlock limit reached (3/3) for '{self.user_data['name']}'",
+                )
+                reply = COLLEAGUE_DAILY_LIMIT_EXCEEDED_MESSAGE.format(
+                    sponsored_colleague=self.user_data["name"],
+                )
+                card = create_it_referral_card(
+                    self.user_data["name"],
+                    attempts=3,
+                    reason="Colleague Limit Reached (3/3)",
+                    details_text=f"Maximum 3 unlocks for colleague {self.user_data['name']} reached today. Your request has been referred to the IT Service Desk.",
+                    ticket_ref=ticket_ref,
+                )
+                return reply, card
 
         res = unlock_account(emp_id)
 

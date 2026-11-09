@@ -249,7 +249,10 @@ def count_recent_failed_attempts(
                         f"""
                         SELECT COUNT(*) AS cnt FROM {table}
                         WHERE requested_by = %s
-                          AND action_taken IN ('UNLOCK_SUCCESS', 'UNLOCK_ATTEMPT', 'UNLOCK_FAILED', 'VERIFY_FAILED', 'UNAUTHORIZED_ATTEMPT')
+                          AND (
+                              action_taken IN ('UNLOCK_FAILED', 'VERIFY_FAILED', 'UNAUTHORIZED_ATTEMPT', '2FA_VERIFICATION_FAILED')
+                              OR (action_taken = 'UNLOCK_SUCCESS' AND error_message NOT LIKE '%%[Colleague Unlock]%%')
+                          )
                           AND event_timestamp >= %s
                         """,
                         (requester_name, cutoff),
@@ -269,7 +272,10 @@ def count_recent_failed_attempts(
             """
             SELECT COUNT(*) AS cnt FROM audit_logs
             WHERE requester_name = ?
-              AND action IN ('UNLOCK_SUCCESS', 'UNLOCK_ATTEMPT', 'UNLOCK_FAILED', 'VERIFY_FAILED', 'UNAUTHORIZED_ATTEMPT')
+              AND (
+                  action IN ('UNLOCK_FAILED', 'VERIFY_FAILED', 'UNAUTHORIZED_ATTEMPT', '2FA_VERIFICATION_FAILED')
+                  OR (action = 'UNLOCK_SUCCESS' AND details NOT LIKE '%[Colleague Unlock]%')
+              )
               AND timestamp >= ?
             """,
             (requester_name, cutoff_iso),
@@ -399,46 +405,43 @@ def check_colleague_sponsorship_limit(
 ) -> Tuple[bool, str, int, Optional[str]]:
     """
     Check if requester is allowed to unlock for this specific colleague.
-    Rule: An employee can ONLY unlock for ONE distinct colleague per 24 hours (up to 3 times).
+    Rule: An employee can unlock multiple colleagues, but cannot unlock the SAME colleague
+    more than 3 times in a 24-hour window.
 
-    Returns: (is_allowed: bool, reason: str, count: int, current_sponsored_colleague: Optional[str])
+    Returns: (is_allowed: bool, reason: str, count: int, colleague_name: str)
     Reasons:
-      - "ALLOWED_FIRST": Requester has not unlocked any colleague yet today.
-      - "ALLOWED_SAME": Requester is unlocking the same colleague they already assisted (< 3 times).
-      - "DIFFERENT_COLLEAGUE": Requester has already unlocked a different colleague today.
+      - "ALLOWED_FIRST": Requester has not unlocked this specific colleague today (0 attempts).
+      - "ALLOWED_REPEAT": Requester has unlocked this colleague < 3 times today (1 or 2 attempts).
       - "COLLEAGUE_LIMIT_REACHED": Requester has already unlocked this colleague 3 times today.
     """
     colleagues = get_sponsored_colleagues_today(
         requester_name, window_minutes=window_minutes, environment=environment
     )
-    if not colleagues:
-        return True, "ALLOWED_FIRST", 0, None
-
-    primary = colleagues[0]
-    sponsored_name = primary["colleague_name"]
-    sponsored_id = primary.get("target_id") or ""
-    unlock_count = primary["unlock_count"]
 
     tgt_clean = (target_name or "").strip().lower()
     tgt_id_clean = (target_id or "").strip().lower()
-    spon_clean = sponsored_name.strip().lower()
-    spon_id_clean = sponsored_id.strip().lower()
 
-    matches = (
-        tgt_clean in spon_clean
-        or spon_clean in tgt_clean
-        or (tgt_id_clean and tgt_id_clean == spon_id_clean)
-        or (tgt_id_clean and tgt_id_clean in spon_clean)
-        or (spon_clean and spon_clean in tgt_clean)
-    )
+    existing_count = 0
+    matched_name = target_name
 
-    if not matches:
-        return False, "DIFFERENT_COLLEAGUE", unlock_count, sponsored_name
+    for c in colleagues:
+        c_name = c["colleague_name"].strip().lower()
+        c_id = (c.get("target_id") or "").strip().lower()
 
-    if unlock_count >= max_unlocks_per_colleague:
-        return False, "COLLEAGUE_LIMIT_REACHED", unlock_count, sponsored_name
+        matches = (
+            (tgt_clean and (tgt_clean in c_name or c_name in tgt_clean))
+            or (tgt_id_clean and (tgt_id_clean == c_id or tgt_id_clean in c_name))
+        )
+        if matches:
+            existing_count = c["unlock_count"]
+            matched_name = c["colleague_name"]
+            break
 
-    return True, "ALLOWED_SAME", unlock_count, sponsored_name
+    if existing_count >= max_unlocks_per_colleague:
+        return False, "COLLEAGUE_LIMIT_REACHED", existing_count, matched_name
+
+    reason = "ALLOWED_FIRST" if existing_count == 0 else "ALLOWED_REPEAT"
+    return True, reason, existing_count, matched_name
 
 
 def reset_rate_limit(requester_name: str, environment: Optional[str] = None) -> None:

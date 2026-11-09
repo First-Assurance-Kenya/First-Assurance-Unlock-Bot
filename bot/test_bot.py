@@ -102,18 +102,24 @@ if "verification code" in reply.lower() or "2fa" in reply.lower() or "code" in r
 assert mock_users["NEWTON01"]["locked"] is False
 print("[✓] Colleague Unlocked: Account unlocked with sponsor audit trail (Attempt 1/3).")
 
-# Case C: John Smith attempts to unlock a DIFFERENT colleague (Jane Doe) -> BLOCKED
+# Case C: John Smith unlocks a DIFFERENT colleague (Jane Doe) -> ALLOWED (not restricted to single colleague)
+mock_users["JANE01"]["locked"] = True
 cid_colleague_2 = "teams-session-colleague-diff"
 handle_user_input(cid_colleague_2, text="Hello Bot", requester_name="John Smith", requester_id="29:john456")
 handle_user_input(cid_colleague_2, text="2", requester_name="John Smith", requester_id="29:john456")
 reply, card = handle_user_input(cid_colleague_2, text="Jane Doe", requester_name="John Smith", requester_id="29:john456")
-print("\n[USER (John Smith attempting 2nd colleague)]: Jane Doe")
+print("\n[USER (John Smith unlocking 2nd colleague)]: Jane Doe")
 print("[BOT]:", reply)
-assert "Colleague Assistance Limit Reached" in reply or "already assisted" in reply
-assert card is not None, "Referral card must be present"
+assert "Colleague Identity Verified" in reply
+assert card is not None, "Verification card should be returned for second colleague"
 facts = extract_facts(card)
-assert facts["Status"] == "Referred to IT Helpdesk"
-print("[✓] Single Colleague Policy Verified: John Smith prevented from opening accounts for multiple colleagues.")
+assert facts["Colleague Name"] == "Jane Doe"
+reply, card = handle_user_input(cid_colleague_2, text="Yes", requester_name="John Smith", requester_id="29:john456")
+if "verification code" in reply.lower() or "2fa" in reply.lower() or "code" in reply.lower():
+    otp = get_active_otp("JANE01")
+    reply, card = handle_user_input(cid_colleague_2, text=otp, requester_name="John Smith", requester_id="29:john456")
+assert mock_users["JANE01"]["locked"] is False
+print("[✓] Multiple Colleague Policy Verified: John Smith successfully assisted a 2nd distinct colleague (Jane Doe).")
 
 # Case D: John Smith unlocks the SAME colleague (Newton Kibe) a 2nd time -> ALLOWED
 mock_users["NEWTON01"]["locked"] = True
