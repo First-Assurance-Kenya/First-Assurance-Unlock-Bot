@@ -35,7 +35,7 @@ def get_smtp_config():
         "user": os.getenv("SMTP_USER", "").strip(),
         "password": os.getenv("SMTP_PASSWORD", "").strip(),
         "use_tls": os.getenv("SMTP_USE_TLS", "true").lower() in ("true", "1", "yes"),
-        "from_addr": os.getenv("SMTP_FROM", "unlock-bot@firstassurance.co.ke").strip(),
+        "from_addr": os.getenv("SMTP_FROM", "itsupportdesk@firstassurance.co.ke").strip(),
         "to_addrs": [
             addr.strip()
             for addr in os.getenv("IT_ALERT_EMAIL", "itstaff@firstassurance.co.ke").split(",")
