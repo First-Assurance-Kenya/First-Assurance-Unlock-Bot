@@ -28,14 +28,25 @@ _COOLDOWN_MINUTES = 30
 
 
 def get_smtp_config():
-    """Load SMTP settings from environment variables with safe enterprise defaults."""
+    """Load SMTP settings from environment variables with enterprise defaults for M365 Authenticated SMTP."""
+    user = os.getenv("SMTP_USER", "").strip()
+    host = os.getenv(
+        "SMTP_HOST",
+        "smtp.office365.com" if user else "firstassurance-co-ke.mail.protection.outlook.com",
+    ).strip()
+    port_str = os.getenv("SMTP_PORT", "").strip()
+    if port_str:
+        port = int(port_str)
+    else:
+        port = 587 if host == "smtp.office365.com" else 25
+
     return {
-        "host": os.getenv("SMTP_HOST", "firstassurance-co-ke.mail.protection.outlook.com").strip(),
-        "port": int(os.getenv("SMTP_PORT", "25").strip() or "25"),
-        "user": os.getenv("SMTP_USER", "").strip(),
+        "host": host,
+        "port": port,
+        "user": user,
         "password": os.getenv("SMTP_PASSWORD", "").strip(),
         "use_tls": os.getenv("SMTP_USE_TLS", "true").lower() in ("true", "1", "yes"),
-        "from_addr": os.getenv("SMTP_FROM", "itsupportdesk@firstassurance.co.ke").strip(),
+        "from_addr": os.getenv("SMTP_FROM", "").strip() or user or "itsupportdesk@firstassurance.co.ke",
         "to_addrs": [
             addr.strip()
             for addr in os.getenv("IT_ALERT_EMAIL", "itstaff@firstassurance.co.ke").split(",")
@@ -80,20 +91,29 @@ def _send_email_worker(
 
     try:
         logger.info("Connecting to SMTP relay %s:%s to send alert for ticket %s...", host, port, ticket_ref)
+        server = smtplib.SMTP(host, port, timeout=15)
+        server.ehlo()
         if config["use_tls"]:
-            server = smtplib.SMTP(host, port, timeout=10)
-            server.ehlo()
             server.starttls()
             server.ehlo()
-        else:
-            server = smtplib.SMTP(host, port, timeout=10)
 
         if config["user"] and config["password"]:
+            logger.info("Authenticating to SMTP server as %s...", config["user"])
             server.login(config["user"], config["password"])
 
         server.sendmail(from_addr, to_addrs, msg.as_string())
         server.quit()
         logger.info("Successfully dispatched IT alert email for ticket %s to %s", ticket_ref, to_addrs)
+    except smtplib.SMTPAuthenticationError as auth_err:
+        logger.error(
+            "SMTP Authentication failed for user '%s' on %s:%s: %s. "
+            "Please check: 1) Password is correct, 2) 'Authenticated SMTP' is enabled in Microsoft 365 Admin Center for %s.",
+            config["user"],
+            host,
+            port,
+            auth_err,
+            config["user"],
+        )
     except Exception as e:
         logger.warning(
             "Could not deliver IT alert email via SMTP (%s:%s): %s. (Alert details logged in audit database).",
