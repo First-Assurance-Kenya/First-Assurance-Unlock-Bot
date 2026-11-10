@@ -186,11 +186,17 @@ class AccountUnlockBot:
 
         return False
 
-    def check_requester_rate_limit(self) -> Tuple[bool, int]:
-        """Check if this requester has exceeded the 3 daily unlock requests limit (admins are exempt unless test mode is enabled)."""
+    def should_enforce_rate_limits(self) -> bool:
+        """Check if rate limits should be enforced for this requester (admins are exempt unless test mode is enabled)."""
         import os
         env_enforce = os.getenv("ADMIN_ENFORCE_RATE_LIMIT", "false").lower() in ("true", "1", "yes")
         if self.is_admin() and not getattr(self, "enforce_admin_rate_limit", False) and not env_enforce:
+            return False
+        return True
+
+    def check_requester_rate_limit(self) -> Tuple[bool, int]:
+        """Check if this requester has exceeded the 3 daily unlock requests limit."""
+        if not self.should_enforce_rate_limits():
             return False, 0
         return check_rate_limit(self.requester_name, max_attempts=3, window_minutes=1440)
 
@@ -531,8 +537,7 @@ class AccountUnlockBot:
 
             fail_msg = COLLEAGUE_VERIFY_FAILED_MESSAGE if self.is_assisting_colleague else VERIFY_FAILED_MESSAGE
 
-            import os
-            is_exempt = self.is_admin() and not getattr(self, "enforce_admin_rate_limit", False) and not os.getenv("ADMIN_ENFORCE_RATE_LIMIT", "").lower() in ("true", "1", "yes")
+            is_exempt = not self.should_enforce_rate_limits()
             if is_exempt:
                 return (
                     f"{fail_msg}\n\n*(IT Administrator: Rate-limit exempt. Type 'ratelimit on' to test limits)*",
@@ -547,8 +552,7 @@ class AccountUnlockBot:
 
         # 2. Check daily rate limit for target employee account
         is_limited, attempts = check_rate_limit(user["employee_id"], max_attempts=3, window_minutes=1440)
-        req_lower = self.requester_name.strip().lower()
-        if is_limited and not any(admin in req_lower for admin in ADMIN_USERS):
+        if is_limited and self.should_enforce_rate_limits():
             self.state = ConversationState.LOCKED_OUT
             audit_id = log_audit_event(
                 action="RATE_LIMITED_REFERRED_TO_IT",
@@ -585,9 +589,7 @@ class AccountUnlockBot:
 
         # 2c. Enforce Colleague Unlock Limit: Maximum 3 unlocks per colleague in 24 hours
         colleague_unlock_count = 0
-        import os
-        should_enforce_colleague = not self.is_admin() or getattr(self, "enforce_admin_rate_limit", False) or os.getenv("ADMIN_ENFORCE_RATE_LIMIT", "").lower() in ("true", "1", "yes")
-        if self.is_assisting_colleague and should_enforce_colleague:
+        if self.is_assisting_colleague and self.should_enforce_rate_limits():
             can_assist, reason, count, sponsored_name = check_colleague_sponsorship_limit(
                 requester_name=self.requester_name,
                 target_name=user["name"],
@@ -712,8 +714,7 @@ class AccountUnlockBot:
 
         # Check rate limit
         is_limited, attempts = check_rate_limit(user["employee_id"], max_attempts=3, window_minutes=1440)
-        req_lower = self.requester_name.strip().lower()
-        if is_limited and not any(admin in req_lower for admin in ADMIN_USERS):
+        if is_limited and self.should_enforce_rate_limits():
             self.state = ConversationState.LOCKED_OUT
             audit_id = log_audit_event(
                 action="RATE_LIMITED_REFERRED_TO_IT",
@@ -896,8 +897,7 @@ class AccountUnlockBot:
         emp_id = self.user_data["employee_id"]
 
         # Final safety check on colleague sponsorship policy before unlock execution
-        should_enforce_colleague = not self.is_admin() or getattr(self, "enforce_admin_rate_limit", False) or os.getenv("ADMIN_ENFORCE_RATE_LIMIT", "").lower() in ("true", "1", "yes")
-        if self.is_assisting_colleague and should_enforce_colleague:
+        if self.is_assisting_colleague and self.should_enforce_rate_limits():
             can_assist, reason, count, sponsored_name = check_colleague_sponsorship_limit(
                 requester_name=self.requester_name,
                 target_name=self.user_data["name"],

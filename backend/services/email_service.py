@@ -9,9 +9,15 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import logging
 import os
+from pathlib import Path
 import smtplib
 import threading
 from typing import Optional
+
+from dotenv import load_dotenv
+
+ROOT = Path(__file__).resolve().parent.parent.parent
+load_dotenv(ROOT / ".env")
 
 logger = logging.getLogger("email-service")
 
@@ -261,3 +267,37 @@ Insure • Secure • Assure
     thread.start()
 
     return ticket_ref
+
+
+if __name__ == "__main__":
+    import sys
+    import time
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    print("=" * 65)
+    print("First Assurance Unlock Bot - SMTP Diagnostic & Test Utility")
+    print("=" * 65)
+    config = get_smtp_config()
+    for k, v in config.items():
+        if k == "password" and v:
+            print(f"  {k}: ********")
+        else:
+            print(f"  {k}: {v}")
+    print("-" * 65)
+    print(f"Attempting direct synchronous SMTP send to: {config['to_addrs']} ...")
+    test_ticket = generate_ticket_ref()
+    subject = f"[Test Diagnostic: {test_ticket}] First Assurance Unlock Bot SMTP Test"
+    plain_text = f"Test incident alert generated manually from VM terminal at {datetime.now()}."
+    html_content = f"<h3>First Assurance Unlock Bot - SMTP Verification</h3><p>Test incident alert generated manually from VM terminal at <strong>{datetime.now()}</strong>.</p>"
+    
+    # Run synchronously to catch and display any errors in terminal
+    _send_email_worker(
+        ticket_ref=test_ticket,
+        subject=subject,
+        plain_text=plain_text,
+        html_content=html_content,
+        target_identifier="test-diagnostic",
+    )
+    print("=" * 65)
+    print("Check your Outlook Inbox, Junk Email, or Quarantine at:", config["to_addrs"])
+    print("=" * 65)
+
